@@ -146,7 +146,7 @@ memcached 服务一个客户的时候, 是怎么一个过程, 试着去调试模
 2. `dispatch_conn_new()`的工作是往工作线程工作队列中添加任务(前面已经提到过), 所以其中一个沉睡的工作线程会被唤醒,`thread_libevent_process()`会被工作线程调用, 注意这些机制都是由 libevent 提供的.
 3. `thread_libevent_process()`调用`conn_new()`新建 struct conn 结构体, **且状态为 conn_new_cmd**, 其对应的就是刚才`accept()`的连接套接字.`conn_new()`最关键的任务是将刚才接受的套接字在 libevent 中注册一个事件, 回调函数是`event_handler()`. 循环继续, 状态 conn_new_cmd 下的操作只是只是将 conn 的状态转换为 conn_waiting;
 4. 循环继续, conn_waiting 状态下的操作只是将 conn 状态转换为 conn_read, 循环退出.
-5. 此后, 如果客户端不请求服务, 那么主线程和工作线程都会沉睡, 注意这些机制都是由 libevent 提供的.
+5. 此后, 如果客户端不请求服务, 那么主线程和工作线程都会沉睡, 注这些机制都是由 libevent 提供的.
 6. 客户敲击命令「get key」后, 工作线程会被唤醒,`event_handler()`被调用了. 看! 又被调用了.`event_handler()->drive_machine()`, **此时 conn 的状态为 conn_read**. conn_read 下的操作就是读数据了, 如果读取成功, conn 状态被转换为 conn_parse_cmd.
 7. 循环继续, conn_parse_cmd 状态下的操作就是尝试解析命令: 可能是较为简单的命令, 就直接回复, 状态转换为 conn_close, 循环接下去就结束了; 涉及存取操作的请求会导致 conn_parse_cmd 状态转换为 conn_nread.
 8. 循环继续, **conn_nread 状态下的操作是真正执行存取命令的地方**. 里面的操作无非是在内存寻找数据项, 返回数据. 所以接下来的状态 conn_mwrite, 它的操作是为客户端回复数据.
@@ -154,7 +154,7 @@ memcached 服务一个客户的时候, 是怎么一个过程, 试着去调试模
 大概就是这么个过程.
 
 ### memcached 的分布式 ###
-memcached 的服务器没有向其他服务器收发数据的功能, memcached 所谓的分布式部署也是并非平时所说的分布式. 所说的「分布式」是通过创建多个 memcached 服务器节点, 在客户端添加**缓存请求分发器**来实现的. memcached 的更多的时候限制是来自网络 I/O, 所以应该尽量减少网络 I/O.
+memcached 的服务器没有向其他 memcached 服务器收发数据的功能, 意即就算部署多个 memcached 服务器, 他们之间也没有任何的通信. memcached 所谓的分布式部署也是并非平时所说的分布式. 所说的「分布式」是通过创建多个 memcached 服务器节点, 在客户端添加**缓存请求分发器**来实现的. memcached 的更多的时候限制是来自**网络 I/O**, 所以应该尽量减少网络 I/O.
 
 ![分布式 memcached](/img/distributed-memcached.png)
 
