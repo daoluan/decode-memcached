@@ -29,7 +29,10 @@ memcached 有可配置的两种模式: unix 域套接字和 TCP/UDP, 允许客�
 其他关于 unix 域套接字优缺点的请参看: https://pangea.stanford.edu/computing/unix/overview/advantages.php
 
 ### 工作线程管理和线程调配方式 ###
-在`thread_init()`,`setup_thread()`函数的实现中, memcached 的意图是很清楚的. 每个线程都有自己独有的工作队列, 线程只要被唤醒就立即进入工作状态, 将自己工作队列里的任务所有完成. 当然, 每一个工作线程都有自己的 libevent 事件中心. 很关键的线索是`thread_init()`的实现中, 每个工作线程都创建了读写管道, 所能给我们的提示是: 只要利用 libevent 在工作线程的事件中心注册读管道的读事件, 就可以按需唤醒线程, 完成工作, 很有意思, 而`setup_thread()`的工作正是读管道的读事件被注册到线程的事件中心, 回调函数是`thread_libevent_process()`.`thread_libevent_process()`的工作就是从工作线程自己的工作队列中取出任务执行,而往工作线程工作队列中添加任务的是`dispatch_conn_new()`,此函数一般由主线程调用.
+在`thread_init()`,`setup_thread()`函数的实现中, memcached 的意图是很清楚的. 每个线程都有自己独有的工作队列, 线程只要被唤醒就立即进入工作状态, 将自己工作队列里的任务所有完成. 当然, 每一个工作线程都有自己的 libevent 事件中心. 
+
+很关键的线索是`thread_init()`的实现中, 每个工作线程都创建了读写管道, 所能给我们的提示是: 只要利用 libevent 在工作线程的事件中心注册读管道的读事件, 就可以按需唤醒线程, 完成工作, 很有意思, 而`setup_thread()`的工作正是读管道的读事件被注册到线程的事件中心, 回调函数是`thread_libevent_process()`.`thread_libevent_process()`的工作就是从工作线程自己的工作队列中取出任务执行,而往工作线程工作队列中添加任务的是`dispatch_conn_new()`,此函数一般由主线程调用.
+
 
 前几天在微博上, 看到 @高端小混混 的微博, 转发了:
 
