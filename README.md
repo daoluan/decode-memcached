@@ -1,26 +1,24 @@
 memcached 源码阅读笔记
 -------------
 
-memcached 源码剖析注释. 这个项目将有助于你理解 memcached 的工作方式.
-
 阅读 memcached 最好有 libevent 基础, memcached 是基于 libevent 构建起来的. 通由 libevent 提供的事件驱动机制触发 memcached 中的 IO 事件.
 
 个人认为, 阅读源码的起初最忌钻牛角尖, 如头文件里天花乱坠的结构体到底有什么用. 源文件里稀里哗啦的函数是做什么的. 刚开始并没必要事无巨细弄清楚头文件每个类型定义的具体用途; 很可能那些是不紧要的工具函数, 知道他的功能和用法就没他事了.
 
-来看 memcached 内部做了什么事情. memcached 是用 c 语言实现, 必须有一个入口函数 `main()`, memcached 的生命从这里开始.
+来看 memcached 内部做了什么事情. memcached 是用 c 语言实现, 必须有一个入口函数`main()`, memcached 的生命从这里开始.
 
 ### 初始化过程 ###
 建立并初始化 main_base, 即主线程的事件中心, 这是 libevent 里面的概念, 可以把它理解为事件分发中心.
 建立并初始化 memcached 内部容器数据结构
 建立并初始化空闲连接结构体数组
-建立并初始化线程结构数组, 指定每个线程的入口函数是 `worker_libevent()`, 并创建工作线程. 从 `worder_libevent()` 的实现来看, 工作线程都会调用 `event_base_loop()` 进入自己的事件循环
+建立并初始化线程结构数组, 指定每个线程的入口函数是`worker_libevent()`, 并创建工作线程. 从`worder_libevent()`的实现来看, 工作线程都会调用`event_base_loop()`进入自己的事件循环
 根据 memcached 配置开启以下两种模式中的一种:
 
 1. 以 unix 域套接字的方式接受客户的请求
 2. 以 TCP/UDP 套接字的方式接受客户的请求
 
-memcached 有可配置的两种模式: unix 域套接字和 TCP/UDP, 允许客户端以两种方式向 memcached 发起请求. 客户端和服务器在同一个主机上的情况下可以用 unix 域套接字, 否则可以采用 TCP/UDP 的模式. 两种模式是不兼容的. 特别的, 如果是 unix 域套接字或者 TCP 模式, 需要建立监听套接字, 并在事件中心注册了读事件, 回调函数是 `event_handler()`, 我们会看到所有的连接都会被注册回调函数是 `event_handler()`.
-调用 `event_base_loop()` 开启 libevent 的事件循环. 到此, memcached 服务器的工作正式进入了工作. 如果遇到致命错误或者客户明令结束 memcached, 那么才会进入接下来的清理工作.
+memcached 有可配置的两种模式: unix 域套接字和 TCP/UDP, 允许客户端以两种方式向 memcached 发起请求. 客户端和服务器在同一个主机上的情况下可以用 unix 域套接字, 否则可以采用 TCP/UDP 的模式. 两种模式是不兼容的. 特别的, 如果是 unix 域套接字或者 TCP 模式, 需要建立监听套接字, 并在事件中心注册了读事件, 回调函数是`event_handler()`, 我们会看到所有的连接都会被注册回调函数是`event_handler()`.
+调用`event_base_loop()`开启 libevent 的事件循环. 到此, memcached 服务器的工作正式进入了工作. 如果遇到致命错误或者客户明令结束 memcached, 那么才会进入接下来的清理工作.
 
 ### UNIX 域套接字和 UDP/TCP 工作模式 ###
 在**初始化过程**中介绍了这两种模式, memcached 这么做为的是让其能更加可配置. TCP/UDP 自不用说, unix 域套接字有独特的优势:
@@ -30,7 +28,7 @@ memcached 有可配置的两种模式: unix 域套接字和 TCP/UDP, 允许客�
 其他关于 unix 域套接字优缺点的请参看: https://pangea.stanford.edu/computing/unix/overview/advantages.php
 
 ### 工作线程管理和线程调配方式 ###
-在 `thread_init()`,`setup_thread()` 函数的实现中, memcached 的意图是很清楚的. 每个线程都有自己独有的工作队列, 线程只要被唤醒就立即进入工作状态, 将自己工作队列里的任务所有完成. 当然, 每一个工作线程都有自己的 libevent 事件中心. 很关键的线索是 `thread_init()` 的实现中, 每个工作线程都创建了读写管道, 所能给我们的提示是: 只要利用 libevent 在工作线程的事件中心注册读管道的读事件, 就可以按需唤醒线程, 完成工作, 很有意思, 而 `setup_thread()` 的工作正是读管道的读事件被注册到线程的事件中心, 回调函数是 `thread_libevent_process()`. `thread_libevent_process()` 的工作就是从工作线程自己的工作队列中取出任务执行,而往工作线程工作队列中添加任务的是 `dispatch_conn_new()`,此函数一般由主线程调用.
+在`thread_init()`,`setup_thread()`函数的实现中, memcached 的意图是很清楚的. 每个线程都有自己独有的工作队列, 线程只要被唤醒就立即进入工作状态, 将自己工作队列里的任务所有完成. 当然, 每一个工作线程都有自己的 libevent 事件中心. 很关键的线索是`thread_init()`的实现中, 每个工作线程都创建了读写管道, 所能给我们的提示是: 只要利用 libevent 在工作线程的事件中心注册读管道的读事件, 就可以按需唤醒线程, 完成工作, 很有意思, 而`setup_thread()`的工作正是读管道的读事件被注册到线程的事件中心, 回调函数是`thread_libevent_process()`.`thread_libevent_process()`的工作就是从工作线程自己的工作队列中取出任务执行,而往工作线程工作队列中添加任务的是`dispatch_conn_new()`,此函数一般由主线程调用.
 前几天在微博上, 看到 @高端小混混 的微博, 转发了:
 
 >@高端小混混
@@ -41,18 +39,17 @@ memcached 所采用的模式就是这里所说的第二种!
 memcached 的线程分配模式是：**一个主线程和多个工作线程**。主线程负责请求的接受，工作线程负责请求的处理和回复。
 
 ### 存储容器 ###
-memcached 是做缓存用的, 内部肯定有一个容器. 回到 `main()` 中, 调用 `assoc_init()` 初始化了容器--hashtable, 采用头插法插入新数据. memcached 只做了一级的索引, 即 hash; 接下来的就靠 memcmp() 在链表中找数据所在的位置. memcached 容器管理的接口主要在 item.h .c 中.
+memcached 是做缓存用的, 内部肯定有一个容器. 回到`main()`中, 调用`assoc_init()`初始化了容器--hashtable, 采用头插法插入新数据. memcached 只做了一级的索引, 即 hash; 接下来的就靠 memcmp() 在链表中找数据所在的位置. memcached 容器管理的接口主要在 item.h .c 中.
 
 ![哈希表](/img/hashtable.png)
 
-
 ### 连接管理 ###
-`main()` 中会调用 `conn_init()` 建立连接结构体数组. 连接结构体 struct conn 记录了连接套接字, 读取的数据, 将要写入的数据, **libevent event 结构体**以及**所属的线程信息**. 当有新的连接时, 主线程会被唤醒, 主线程选定一个工作线程 thread0, 在 thread0 的写管道中写入数据, 特别的如果是接受新的连接而不是接受新的数据, 写入管道的数据是字符 'c'. 工作线程因管道中有数据可读被唤醒, `thread_libevent_process()` 被调用, 新连接套接字被注册了 `event_handler()` 回调函数, 这些工作在 `conn_new()` 中完成. 因此, 客户端有命令请求的时候(譬如发起 get key 命令), 工作线程都会被触发调用 `event_handler()`.
+`main()`中会调用`conn_init()`建立连接结构体数组. 连接结构体 struct conn 记录了连接套接字, 读取的数据, 将要写入的数据, **libevent event 结构体**以及**所属的线程信息**. 当有新的连接时, 主线程会被唤醒, 主线程选定一个工作线程 thread0, 在 thread0 的写管道中写入数据, 特别的如果是接受新的连接而不是接受新的数据, 写入管道的数据是字符 'c'. 工作线程因管道中有数据可读被唤醒,`thread_libevent_process()`被调用, 新连接套接字被注册了`event_handler()`回调函数, 这些工作在`conn_new()`中完成. 因此, 客户端有命令请求的时候(譬如发起 get key 命令), 工作线程都会被触发调用`event_handler()`.
 当出现致命错误或者客户命令结束服务(quit 命令), 关于此连接的结构体内部的数据会被释放(譬如曾经读取的数据), 但结构体本身不释放, 等待下一次使用. 如果有需要, 连接结构体数组会指数自增.
 
 ### 一个请求的工作流程 ###
 memcached 服务一个客户的时候, 是怎么一个过程, 试着去调试模拟一下. 当一个客户向 memcached 发起请求时, 主线程会被唤醒, 接受请求. 接下来的工作在**连接管理**中有说到.
-客户已经与 memcached 服务器建立了连接, 客户在终端(黑框框)敲击 get key + 回车键, 一个请求包就发出去了. 从**连接管理**中已经了解到所有连接套接字都会被注册回调函数为 `event_handler()`, 因此 `event_handler()` 会被触发调用.
+客户已经与 memcached 服务器建立了连接, 客户在终端(黑框框)敲击 get key + 回车键, 一个请求包就发出去了. 从**连接管理**中已经了解到所有连接套接字都会被注册回调函数为`event_handler()`, 因此`event_handler()`会被触发调用.
 
 void event_handler(const int fd, const short which, void *arg) {
     conn *c;
@@ -76,7 +73,7 @@ void event_handler(const int fd, const short which, void *arg) {
     return;
 }
 
-`event_handler()` 调用了 `drive_machine()`. `drive_machine()` 是请求处理的开端, 特别的当有新的连接时,  listen socket 也是有请求的, 所以建立新的连接也会调用 `drive_machine()`, 这在连接管理有提到过. 下面是 `drive_machine()` 函数的骨架:
+`event_handler()`调用了`drive_machine()`.`drive_machine()`是请求处理的开端, 特别的当有新的连接时,  listen socket 也是有请求的, 所以建立新的连接也会调用`drive_machine()`, 这在连接管理有提到过. 下面是`drive_machine()`函数的骨架:
 
 // 请求的开端. 当有新的连接的时候 event_handler() 会调用此函数.
 static void drive_machine(conn *c) {
@@ -132,15 +129,15 @@ static void drive_machine(conn *c) {
 
 这个过程任何一个环节出了问题都会导致状态转变为 conn_close. 带着刚开始的问题把从客户连接到一个命令执行结束的过程是怎么样的:
 
-1. 客户 `connect()` 后, memcached 服务器主线程被唤醒, 接下来的调用链是 `event_handler()->drive_machine()` 被调用,此时主线程对应 conn 状态为 conn_listining,接受请求
+1. 客户`connect()`后, memcached 服务器主线程被唤醒, 接下来的调用链是`event_handler()->drive_machine()`被调用,此时主线程对应 conn 状态为 conn_listining,接受请求
 
     dispatch_conn_new(sfd, conn_new_cmd, EV_READ | EV_PERSIST,DATA_BUFFER_SIZE, tcp_transport);
 
-2. `dispatch_conn_new()` 的工作是往工作线程工作队列中添加任务(前面已经提到过), 所以其中一个沉睡的工作线程会被唤醒, `thread_libevent_process()` 会被工作线程调用, 注意这些机制都是由 libevent 提供的.
-3. `thread_libevent_process()` 调用`conn_new()`新建 struct conn 结构体, **且状态为 conn_new_cmd**, 其对应的就是刚才`accept()`的连接套接字.`conn_new()` 最关键的任务是将刚才接受的套接字在 libevent 中注册一个事件, 回调函数是 `event_handler()`. 循环继续, 状态 conn_new_cmd 下的操作只是只是将 conn 的状态转换为 conn_waiting;
+2.`dispatch_conn_new()`的工作是往工作线程工作队列中添加任务(前面已经提到过), 所以其中一个沉睡的工作线程会被唤醒,`thread_libevent_process()`会被工作线程调用, 注意这些机制都是由 libevent 提供的.
+3.`thread_libevent_process()`调用`conn_new()`新建 struct conn 结构体, **且状态为 conn_new_cmd**, 其对应的就是刚才`accept()`的连接套接字.`conn_new()`最关键的任务是将刚才接受的套接字在 libevent 中注册一个事件, 回调函数是`event_handler()`. 循环继续, 状态 conn_new_cmd 下的操作只是只是将 conn 的状态转换为 conn_waiting;
 4. 循环继续, conn_waiting 状态下的操作只是将 conn 状态转换为 conn_read, 循环退出.
 5. 此后, 如果客户端不请求服务, 那么主线程和工作线程都会沉睡, 注意这些机制都是由 libevent 提供的.
-6. 客户敲击命令「get key」后, 工作线程会被唤醒, `event_handler()` 被调用了. 看! 又被调用了. `event_handler()->drive_machine()`, **此时 conn 的状态为 conn_read**. conn_read 下的操作就是读数据了, 如果读取成功, conn 状态被转换为 conn_parse_cmd.
+6. 客户敲击命令「get key」后, 工作线程会被唤醒,`event_handler()`被调用了. 看! 又被调用了.`event_handler()->drive_machine()`, **此时 conn 的状态为 conn_read**. conn_read 下的操作就是读数据了, 如果读取成功, conn 状态被转换为 conn_parse_cmd.
 7. 循环继续, conn_parse_cmd 状态下的操作就是尝试解析命令: 可能是较为简单的命令, 就直接回复, 状态转换为 conn_close, 循环接下去就结束了; 涉及存取操作的请求会导致 conn_parse_cmd 状态转换为 conn_nread.
 8. 循环继续, **conn_nread 状态下的操作是真正执行存取命令的地方**. 里面的操作无非是在内存寻找数据项, 返回数据. 所以接下来的状态 conn_mwrite, 它的操作是为客户端回复数据.
 9. 状态又回到了 conn_new_cmd 迎接新的请求, 直到客户命令结束服务或者发生致命错误.
