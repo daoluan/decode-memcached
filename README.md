@@ -51,78 +51,78 @@ memcached 是做缓存用的, 内部肯定有一个容器. 回到`main()`中, �
 memcached 服务一个客户的时候, 是怎么一个过程, 试着去调试模拟一下. 当一个客户向 memcached 发起请求时, 主线程会被唤醒, 接受请求. 接下来的工作在**连接管理**中有说到.
 客户已经与 memcached 服务器建立了连接, 客户在终端(黑框框)敲击 get key + 回车键, 一个请求包就发出去了. 从**连接管理**中已经了解到所有连接套接字都会被注册回调函数为`event_handler()`, 因此`event_handler()`会被触发调用.
 
-void event_handler(const int fd, const short which, void *arg) {
-    conn *c;
-
-    c = (conn *)arg;
-    assert(c != NULL);
-
-    c->which = which;
-
-    /* sanity */
-    if (fd != c->sfd) {
-        if (settings.verbose > 0)
-            fprintf(stderr, "Catastrophic: event fd doesn't match conn fd!\n");
-        conn_close(c);
+    void event_handler(const int fd, const short which, void *arg) {
+        conn *c;
+    
+        c = (conn *)arg;
+        assert(c != NULL);
+    
+        c->which = which;
+    
+        /* sanity */
+        if (fd != c->sfd) {
+            if (settings.verbose > 0)
+                fprintf(stderr, "Catastrophic: event fd doesn't match conn fd!\n");
+            conn_close(c);
+            return;
+        }
+    
+        drive_machine(c);
+    
+        /* wait for next event */
         return;
     }
 
-    drive_machine(c);
-
-    /* wait for next event */
-    return;
-}
-
 `event_handler()`调用了`drive_machine()`.`drive_machine()`是请求处理的开端, 特别的当有新的连接时,  listen socket 也是有请求的, 所以建立新的连接也会调用`drive_machine()`, 这在连接管理有提到过. 下面是`drive_machine()`函数的骨架:
 
-// 请求的开端. 当有新的连接的时候 event_handler() 会调用此函数.
-static void drive_machine(conn *c) {
-    bool stop = false;
-    int sfd, flags = 1;
-    socklen_t addrlen;
-    struct sockaddr_storage addr;
-    int nreqs = settings.reqs_per_event;
-    int res;
-    const char *str;
-
-    assert(c != NULL);
-
-    while (!stop) {
-        // while 能保证一个命令被执行完成或者异常中断(譬如 IO 操作次数超出了一定的限制)
-
-        switch(c->state) {
-        // 正在连接, 还没有 accept
-        case conn_listening:
-
-        // 等待新的命令请求
-        case conn_waiting:
-
-        // 读取数据
-        case conn_read:
-
-        // 尝试解析命令
-        case conn_parse_cmd :
-
-        // 新的命令请求, 只是负责转变 conn 的状态
-        case conn_new_cmd:
-
-        // 真正执行命令的地方
-        case conn_nread:
-
-        // 读取所有的数据, 抛弃!!! 一般出错的情况下会转换到此状态
-        case conn_swallow:
-
-        // 数据回复
-        case conn_write:
-
-        case conn_mwrite:
-
-        // 连接结束. 一般出错或者客户显示结束服务的情况下回转换到此状态
-        case conn_closing:
+    // 请求的开端. 当有新的连接的时候 event_handler() 会调用此函数.
+    static void drive_machine(conn *c) {
+        bool stop = false;
+        int sfd, flags = 1;
+        socklen_t addrlen;
+        struct sockaddr_storage addr;
+        int nreqs = settings.reqs_per_event;
+        int res;
+        const char *str;
+    
+        assert(c != NULL);
+    
+        while (!stop) {
+            // while 能保证一个命令被执行完成或者异常中断(譬如 IO 操作次数超出了一定的限制)
+    
+            switch(c->state) {
+            // 正在连接, 还没有 accept
+            case conn_listening:
+    
+            // 等待新的命令请求
+            case conn_waiting:
+    
+            // 读取数据
+            case conn_read:
+    
+            // 尝试解析命令
+            case conn_parse_cmd :
+    
+            // 新的命令请求, 只是负责转变 conn 的状态
+            case conn_new_cmd:
+    
+            // 真正执行命令的地方
+            case conn_nread:
+    
+            // 读取所有的数据, 抛弃!!! 一般出错的情况下会转换到此状态
+            case conn_swallow:
+    
+            // 数据回复
+            case conn_write:
+    
+            case conn_mwrite:
+    
+            // 连接结束. 一般出错或者客户显示结束服务的情况下回转换到此状态
+            case conn_closing:
+            }
         }
+        return;
     }
-    return;
-}
 
 通过修改连接结构体状态 struct conn.state 执行相应的操作, 从而完成一个请求, 完成后 stop 会被设置为 true, 一个命令只有执行结束(无论结果如何)才会跳出这个循环. 我们看到 struct conn 有好多种状态, 一个正常执行的命令状态的转换是:
 >conn_new_cmd->conn_waiting->conn_read->conn_parse_cmd->conn_nread->conn_mwrite->conn_close
