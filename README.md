@@ -1,3 +1,6 @@
+memcached 源码阅读笔记
+-------------
+
 memcached 源码剖析注释. 这个项目将有助于你理解 memcached 的工作方式.
 
 阅读 memcached 最好有 libevent 基础, memcached 是基于 libevent 构建起来的. 通由 libevent 提供的事件驱动机制触发 memcached 中的 IO 事件.
