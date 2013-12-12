@@ -134,6 +134,7 @@ memcached 服务一个客户的时候, 是怎么一个过程, 试着去调试模
     }
 
 通过修改连接结构体状态 struct conn.state 执行相应的操作, 从而完成一个请求, 完成后 stop 会被设置为 true, 一个命令只有执行结束(无论结果如何)才会跳出这个循环. 我们看到 struct conn 有好多种状态, 一个正常执行的命令状态的转换是:
+
     conn_new_cmd->conn_waiting->conn_read->conn_parse_cmd->conn_nread->conn_mwrite->conn_close
 
 这个过程任何一个环节出了问题都会导致状态转变为 conn_close. 带着刚开始的问题把从客户连接到一个命令执行结束的过程是怎么样的:
