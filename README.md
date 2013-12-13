@@ -151,8 +151,8 @@ memcached 服务一个客户的时候, 是怎么一个过程, 试着去调试模
 
     dispatch_conn_new(sfd, conn_new_cmd, EV_READ | EV_PERSIST,DATA_BUFFER_SIZE, tcp_transport);
 
-2.`dispatch_conn_new()`的工作是往工作线程工作队列中添加任务(前面已经提到过), 所以其中一个沉睡的工作线程会被唤醒,`thread_libevent_process()`会被工作线程调用, 注意这些机制都是由 libevent 提供的.
-3.`thread_libevent_process()`调用`conn_new()`新建 struct conn 结构体, **且状态为 conn_new_cmd**, 其对应的就是刚才`accept()`的连接套接字.`conn_new()`最关键的任务是将刚才接受的套接字在 libevent 中注册一个事件, 回调函数是`event_handler()`. 循环继续, 状态 conn_new_cmd 下的操作只是只是将 conn 的状态转换为 conn_waiting;
+2. `dispatch_conn_new()`的工作是往工作线程工作队列中添加任务(前面已经提到过), 所以其中一个沉睡的工作线程会被唤醒,`thread_libevent_process()`会被工作线程调用, 注意这些机制都是由 libevent 提供的.
+3. `thread_libevent_process()`调用`conn_new()`新建 struct conn 结构体, **且状态为 conn_new_cmd**, 其对应的就是刚才`accept()`的连接套接字.`conn_new()`最关键的任务是将刚才接受的套接字在 libevent 中注册一个事件, 回调函数是`event_handler()`. 循环继续, 状态 conn_new_cmd 下的操作只是只是将 conn 的状态转换为 conn_waiting;
 4. 循环继续, conn_waiting 状态下的操作只是将 conn 状态转换为 conn_read, 循环退出.
 5. 此后, 如果客户端不请求服务, 那么主线程和工作线程都会沉睡, 注意这些机制都是由 libevent 提供的.
 6. 客户敲击命令「get key」后, 工作线程会被唤醒,`event_handler()`被调用了. 看! 又被调用了.`event_handler()->drive_machine()`, **此时 conn 的状态为 conn_read**. conn_read 下的操作就是读数据了, 如果读取成功, conn 状态被转换为 conn_parse_cmd.
