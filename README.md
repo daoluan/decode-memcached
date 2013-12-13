@@ -51,7 +51,7 @@ memcached 所采用的模式就是这里所说的第二种!
 memcached 的线程分配模式是：**一个主线程和多个工作线程**。主线程负责初始化和将接收的请求分派给工作线程，工作线程负责接收客户的命令请求和回复客户。
 
 ### 存储容器 ###
-memcached 是做缓存用的, 内部肯定有一个容器. 回到`main()`中, 调用`assoc_init()`初始化了容器--hashtable, 采用头插法插入新数据. memcached 只做了一级的索引, 即 hash; 接下来的就靠 memcmp() 在链表中找数据所在的位置. memcached 容器管理的接口主要在 item.h .c 中.
+memcached 是做缓存用的, 内部肯定有一个容器. 回到`main()`中, 调用`assoc_init()`初始化了容器--hashtable, 采用头插法插入新数据, 因为头插法是最快的. memcached 只做了一级的索引, 即 hash; 接下来的就靠 memcmp() 在链表中找数据所在的位置. memcached 容器管理的接口主要在 item.h .c 中.
 
 ![哈希表](/img/hashtable.png)
 
