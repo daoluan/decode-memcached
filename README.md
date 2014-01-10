@@ -1,7 +1,7 @@
 memcached 源码阅读笔记
 -------------
 
-阅读 memcached 最好有 libevent 基础, memcached 是基于 libevent 构建起来的. 通由 libevent 提供的事件驱动机制触发 memcached 中的 IO 事件.
+阅读 memcached 最好有 libevent 基础, memcached 是基于 libevent 构建起来的. 通由 libevent 提供的事件驱动机制触发 memcached 中的 IO 事件. 已经有大牛剖析过 libevent 源码了，推荐阅读：[这里](http://blog.csdn.net/sparkliang/article/details/4957667)
 
 个人认为, 阅读源码的起初最忌钻牛角尖, 如头文件里天花乱坠的结构体到底有什么用. 源文件里稀里哗啦的函数是做什么的. 刚开始并没必要事无巨细弄清楚头文件每个类型定义的具体用途; 很可能那些是不紧要的工具函数, 知道他的功能和用法就没他事了.
 
