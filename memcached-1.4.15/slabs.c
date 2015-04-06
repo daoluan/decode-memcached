@@ -24,14 +24,21 @@
 /* powers-of-N allocation structures */
 
 typedef struct {
+    // 每个内存块大小
     unsigned int size;      /* sizes of items */
+    // 每个 slab 内存块的数量
     unsigned int perslab;   /* how many items per slab */
 
+    // 空闲的内存块会组成一个链表
     void *slots;           /* list of item ptrs */
+
+    // 当前空闲内存块的数量
     unsigned int sl_curr;   /* total free items in list */
 
+    // slab 数量
     unsigned int slabs;     /* how many slabs were allocated for this class */
 
+    // slab 指针
     void **slab_list;       /* array of slab pointers */
     unsigned int list_size; /* size of prev array */
 
@@ -194,10 +201,13 @@ static void split_slab_page_into_freelist(char *ptr, const unsigned int id) {
 
 static int do_slabs_newslab(const unsigned int id) {
     slabclass_t *p = &slabclass[id];
+
+    // 计算需要分配内存的大小
     int len = settings.slab_reassign ? settings.item_size_max
         : p->size * p->perslab;
     char *ptr;
 
+    // 扩大 slab_list，并分配内存
     if ((mem_limit && mem_malloced + len > mem_limit && p->slabs > 0) ||
         (grow_slab_list(id) == 0) ||
         ((ptr = memory_allocate((size_t)len)) == 0)) {
@@ -206,9 +216,11 @@ static int do_slabs_newslab(const unsigned int id) {
         return 0;
     }
 
+    // 将新分配的内存初始化，并切割插入到空闲链表中
     memset(ptr, 0, (size_t)len);
     split_slab_page_into_freelist(ptr, id);
 
+    // 调整 slab_list 指针指向新分配的空间
     p->slab_list[p->slabs++] = ptr;
     mem_malloced += len;
     MEMCACHED_SLABS_SLABCLASS_ALLOCATE(id);
@@ -371,6 +383,8 @@ static void do_slabs_stats(ADD_STAT add_stats, void *c) {
 static void *memory_allocate(size_t size) {
     void *ret;
 
+    // mem_base 是 memcached 预先分配的内存，如果有需要可以从这里，以提高当下
+    // 内存分配的效率
     if (mem_base == NULL) {
         /* We are not using a preallocated large memory chunk */
         ret = malloc(size);
@@ -400,6 +414,7 @@ static void *memory_allocate(size_t size) {
 void *slabs_alloc(size_t size, unsigned int id) {
     void *ret;
 
+    // 每次内存的分配都需要加锁
     pthread_mutex_lock(&slabs_lock);
     ret = do_slabs_alloc(size, id);
     pthread_mutex_unlock(&slabs_lock);
