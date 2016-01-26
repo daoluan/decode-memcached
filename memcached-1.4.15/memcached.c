@@ -4253,15 +4253,15 @@ void event_handler(const int fd, const short which, void *arg) {
     /* wait for next event */
     return;
 }
-
+//获取一个socket资源
 static int new_socket(struct addrinfo *ai) {
     int sfd;
     int flags;
-
+	//获取socket资源
     if ((sfd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol)) == -1) {
         return -1;
     }
-
+	//fcntl设置非阻塞
     if ((flags = fcntl(sfd, F_GETFL, 0)) < 0 ||
         fcntl(sfd, F_SETFL, flags | O_NONBLOCK) < 0) {
         perror("setting O_NONBLOCK");
@@ -4275,6 +4275,7 @@ static int new_socket(struct addrinfo *ai) {
 /*
  * Sets a socket's send buffer size to the maximum allowed by the system.
  */
+ //设置socket的发送缓冲区参数为系统允许的最大值
 static void maximize_sndbuf(const int sfd) {
     socklen_t intsize = sizeof(int);
     int last_good = 0;
@@ -4282,6 +4283,7 @@ static void maximize_sndbuf(const int sfd) {
     int old_size;
 
     /* Start with the default size. */
+	//选项SO_SNDBUF表示发送缓冲区
     if (getsockopt(sfd, SOL_SOCKET, SO_SNDBUF, &old_size, &intsize) != 0) {
         if (settings.verbose > 0)
             perror("getsockopt(SO_SNDBUF)");
@@ -4289,6 +4291,7 @@ static void maximize_sndbuf(const int sfd) {
     }
 
     /* Binary-search for the real maximum. */
+	//这里通过二分法来逐步获取最大值，很巧妙的设计，值得学习，MAX_SENDBUF_SIZE为 256 * 1024 * 1024.
     min = old_size;
     max = MAX_SENDBUF_SIZE;
 
@@ -4315,6 +4318,7 @@ static void maximize_sndbuf(const int sfd) {
  *        when they are successfully added to the list of ports we
  *        listen on.
  */
+ //创建套接字，绑定端口
 static int server_socket(const char *interface,
                          int port,
                          enum network_transport transport,
@@ -4329,7 +4333,7 @@ static int server_socket(const char *interface,
     int error;
     int success = 0;
     int flags =1;
-
+	//判断udp或者tcp
     hints.ai_socktype = IS_UDP(transport) ? SOCK_DGRAM : SOCK_STREAM;
 
     if (port == -1) {
@@ -4338,6 +4342,8 @@ static int server_socket(const char *interface,
     snprintf(port_buf, sizeof(port_buf), "%d", port);
 
     // getaddrinfo函数能够处理名字到地址以及服务到端口这两种转换，返回的是一个addrinfo的结构（列表）指针而不是一个地址清单。
+	//调用getaddrinfo,将主机地址和端口号映射成为socket地址信息，地址信息由ai带回
+	//参考：《UNP》P245 getaddrinfo
     error= getaddrinfo(interface, port_buf, &hints, &ai);
 
     if (error != 0) {
@@ -4348,6 +4354,12 @@ static int server_socket(const char *interface,
         return 1;
     }
 
+	/*
+	getaddrinfo返回多个addrinfo的情形有如下两种： 
+	1.如果与interface参数关联的地址有多个，那么适用于所请求地址簇的每个地址都返回一个对应的结构。 
+	2.如果port_buf参数指定的服务支持多个套接口类型，那么每个套接口类型都可能返回一个对应的结构。  
+	reference:http://blog.csdn.net/lcli2009/article/details/21609871
+	*/  
     for (next= ai; next; next= next->ai_next) {
         conn *listen_conn_add;
 
@@ -4366,6 +4378,7 @@ static int server_socket(const char *interface,
 
 #ifdef IPV6_V6ONLY
         if (next->ai_family == AF_INET6) {
+			//设置ipv6的选项值，只接受ipv6的数据包
             error = setsockopt(sfd, IPPROTO_IPV6, IPV6_V6ONLY, (char *) &flags, sizeof(flags));
             if (error != 0) {
                 perror("setsockopt");
@@ -4375,20 +4388,21 @@ static int server_socket(const char *interface,
         }
 #endif
 
-        // 设置为复用端口
+        //设定socket选项，SO_REUSEADDR表示重用地址信息，具体查看《UNP》p151
         setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, (void *)&flags, sizeof(flags));
-
+		//如果是udp协议，则扩大发送缓冲区
         if (IS_UDP(transport)) {
             maximize_sndbuf(sfd);
         } else {
+			//设定socket选项，SO_KEEPALIVE表示保活，保持连接检测对方主机是否崩溃
             error = setsockopt(sfd, SOL_SOCKET, SO_KEEPALIVE, (void *)&flags, sizeof(flags));
             if (error != 0)
                 perror("setsockopt");
-
+			//设定socket选项，SO_LINGER表示执行close操作时，如果缓冲区还有数据，可以继续发送
             error = setsockopt(sfd, SOL_SOCKET, SO_LINGER, (void *)&ling, sizeof(ling));
             if (error != 0)
                 perror("setsockopt");
-
+			//TCP_NODELAY表示禁用Nagle算法,提高效率
             error = setsockopt(sfd, IPPROTO_TCP, TCP_NODELAY, (void *)&flags, sizeof(flags));
             if (error != 0)
                 perror("setsockopt");
@@ -4467,19 +4481,22 @@ static int server_socket(const char *interface,
             listen_conn_add->next = listen_conn;
             listen_conn = listen_conn_add;
         }
-    }
-
+    }// end for
+	//释放资源
     freeaddrinfo(ai);
 
     /* Return zero iff we detected no errors in starting up connections */
     return success == 0;
 }
 
+//ip和端口的监听与绑定
 static int server_sockets(int port, enum network_transport transport,
                           FILE *portnumber_file) {
     if (settings.inter == NULL) {
+		//执行监听和绑定操作
         return server_socket(settings.inter, port, transport, portnumber_file);
     } else {
+		//如果服务器有多个ip信息，可以在每个(ip,port)上面绑定一个Memcached实例，下面是一些输入参数的解析，解析完毕之后，执行绑定
         // tokenize them and bind to each one of them..
         char *b;
         int ret = 0;
@@ -4494,6 +4511,7 @@ static int server_sockets(int port, enum network_transport transport,
         }
 
         // strtok_r是linux平台下的strtok函数的线程安全版。第二个参数是分隔符, 可以设置多个分隔符.
+		//for循环绑定多次
         for (char *p = strtok_r(list, ";,", &b);
              p != NULL;
              p = strtok_r(NULL, ";,", &b)) {
@@ -5392,7 +5410,7 @@ int main (int argc, char **argv) {
         exit(EX_OSERR);
     }
 
-    // 启动工作线程
+    // 创建并启动工作线程组，传入线程个数和libevent的实例
     /* start up worker threads if MT mode */
     thread_init(settings.num_threads, main_base);
 

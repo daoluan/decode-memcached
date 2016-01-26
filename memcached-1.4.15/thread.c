@@ -338,6 +338,7 @@ void accept_new_conns(const bool do_accept) {
  //     初始化互斥量
  //     等
 static void setup_thread(LIBEVENT_THREAD *me) {
+	//初始化event_base，请参考libevent的手册
     me->base = event_init();
     if (! me->base) {
         fprintf(stderr, "Can't allocate event base\n");
@@ -811,7 +812,7 @@ void slab_stats_aggregate(struct thread_stats *stats, struct slab_stats *out) {
  * nthreads  Number of worker event handler threads to spawn
     需准备的线程数
  * main_base Event base for main thread
-    分发线程
+    分发线程的libevent实例
  */
 void thread_init(int nthreads, struct event_base *main_base) {
     int         i;
@@ -850,15 +851,20 @@ void thread_init(int nthreads, struct event_base *main_base) {
         perror("Can't allocate item locks");
         exit(1);
     }
-    // 初始化
+    // 对锁进行初始化
     for (i = 0; i < item_lock_count; i++) {
         pthread_mutex_init(&item_locks[i], NULL);
     }
+	
+	//创建线程的局部变量，该局部变量的名称为item_lock_type_key,用于保存主hash表所持有的锁的类型 
+    //主hash表在进行扩容时，该锁类型会变为全局的锁，否则(不在扩容过程中)，则是局部锁
+	//reference:http://blog.csdn.net/lcli2009/article/details/21525839
     pthread_key_create(&item_lock_type_key, NULL);
     pthread_mutex_init(&item_global_lock, NULL);
 
 
     // LIBEVENT_THREAD 是结合 libevent 使用的结构体, event_base, 读写管道
+	//为线程组分配nthreads个空间
     threads = calloc(nthreads, sizeof(LIBEVENT_THREAD));
     if (! threads) {
         perror("Can't allocate thread descriptors");
