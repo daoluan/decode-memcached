@@ -321,19 +321,21 @@ conn *conn_from_freelist() {
 
 /*
  * Adds a connection to the freelist. 0 = success.
+ * 添加conn到空闲链表中
  */
 bool conn_add_to_freelist(conn *c) {
     bool ret = true;
 
     pthread_mutex_lock(&conn_lock);
+	//还有空间则直接添加
     if (freecurr < freetotal) {
         freeconns[freecurr++] = c;
         ret = false;
-    // 当前使用的下标已经超出了空闲总数, 尝试扩大空闲数组
+    //没有空间，进行扩容
     } else {
         /* try to enlarge free connections array */
         // 尝试增大空间连接结构体数组
-        size_t newsize = freetotal * 2; // 指数增长
+        size_t newsize = freetotal * 2; // 扩容2倍
         conn **new_freeconns = realloc(freeconns, sizeof(conn *) * newsize);
         if (new_freeconns) {
             freetotal = newsize;
@@ -372,7 +374,7 @@ conn *conn_new(const int sfd, enum conn_states init_state,
     {
         /* data */
     };
-    conn *c = conn_from_freelist();
+    conn *c = conn_from_freelist();//获取一个空闲的连接
 
     if (NULL == c) {
         // 可能分配失败了, 因为默认数量有限. 进行新的扩展
@@ -435,7 +437,7 @@ conn *conn_new(const int sfd, enum conn_states init_state,
     } else {
         c->request_addr_size = 0;
     }
-
+	//输出一些日志信息
     if (settings.verbose > 1) {
         if (init_state == conn_listening) {
             fprintf(stderr, "<%d server listening (%s)\n", sfd,
@@ -4247,7 +4249,7 @@ void event_handler(const int fd, const short which, void *arg) {
         conn_close(c);
         return;
     }
-
+	//进入状态机，进行处理
     drive_machine(c);
 
     /* wait for next event */

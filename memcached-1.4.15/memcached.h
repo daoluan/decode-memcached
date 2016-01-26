@@ -219,6 +219,7 @@ struct slab_stats {
 
 /**
  * Stats stored per-thread.
+ * 线程的统计信息
  */
 struct thread_stats {
     pthread_mutex_t   mutex;
@@ -241,6 +242,7 @@ struct thread_stats {
 
 /**
  * Global stats.
+ * 全局的统计信息
  */
 struct stats {
     pthread_mutex_t mutex;

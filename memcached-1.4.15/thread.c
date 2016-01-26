@@ -303,7 +303,7 @@ static void cqi_free(CQ_ITEM *item) {
 
 /*
  * Creates a worker thread.
- * 启动线程
+ * 创建工作线程
  */
 static void create_worker(void *(*func)(void *), void *arg) {
     pthread_t       thread;
@@ -311,7 +311,7 @@ static void create_worker(void *(*func)(void *), void *arg) {
     int             ret;
 
     pthread_attr_init(&attr);
-
+	//线程处理函数为:worker_libevent
     if ((ret = pthread_create(&thread, &attr, func, arg)) != 0) {
         fprintf(stderr, "Can't create thread: %s\n",
                 strerror(ret));
@@ -338,7 +338,7 @@ void accept_new_conns(const bool do_accept) {
  //     初始化互斥量
  //     等
 static void setup_thread(LIBEVENT_THREAD *me) {
-	//初始化event_base，请参考libevent的手册
+	//初始化event_base，请参考libevent手册
     me->base = event_init();
     if (! me->base) {
         fprintf(stderr, "Can't allocate event base\n");
@@ -349,6 +349,7 @@ static void setup_thread(LIBEVENT_THREAD *me) {
     // 在线程数据结构初始化的时候, 为 me->notify_receive_fd 读管道注册读事件, 回调函数是 thread_libevent_process()
     event_set(&me->notify_event, me->notify_receive_fd,
               EV_READ | EV_PERSIST, thread_libevent_process, me);
+	//为event_base实例注册nofify_event事件，请参考libevent手册
     event_base_set(me->base, &me->notify_event);
 
     if (event_add(&me->notify_event, 0) == -1) {
@@ -356,7 +357,7 @@ static void setup_thread(LIBEVENT_THREAD *me) {
         exit(1);
     }
 
-    // 初始化该线程的工作队列
+    // 创建并初始化该线程的工作队列
     me->new_conn_queue = malloc(sizeof(struct conn_queue));
     if (me->new_conn_queue == NULL) {
         perror("Failed to allocate memory for connection queue");
@@ -394,6 +395,7 @@ static void *worker_libevent(void *arg) {
      * all item_lock calls...
      */
     me->item_lock_type = ITEM_LOCK_GRANULAR;
+	//设置线程的属性
     pthread_setspecific(item_lock_type_key, &me->item_lock_type);
 
     register_thread_initialized();
