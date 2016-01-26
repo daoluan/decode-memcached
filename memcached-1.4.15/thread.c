@@ -428,6 +428,7 @@ static void thread_libevent_process(int fd, short which, void *arg) {
 
     if (NULL != item) {
         // 为新的请求建立一个连接结构体. 连接其实已经建立, 这里只是为了填充连接结构体. 最关键的动作是在 libevent 中注册了事件, 回调函数是 event_handler()
+		//event_handler的执行流程最终会进入业务处理的状态机中
         conn *c = conn_new(item->sfd, item->init_state, item->event_flags,
                            item->read_buffer_size, item->transport, me->base);
         if (c == NULL) {
@@ -480,7 +481,7 @@ void dispatch_conn_new(int sfd, enum conn_states init_state, int event_flags,
     char buf[1];
 
     // 线程池中有多个线程, 每个线程都有一个工作队列, 线程所需要做的就是从工作队列中取出工作任务并执行, 只要队列为空线程就可以进入等待状态
-    // 计算线程信息下标
+    // 通过轮询来选择一个线程
     int tid = (last_thread + 1) % settings.num_threads;
 
     // LIBEVENT_THREAD threads 是一个全局数组变量

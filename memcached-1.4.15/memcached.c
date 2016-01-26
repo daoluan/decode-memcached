@@ -619,9 +619,10 @@ static void conn_close(conn *c) {
  * This should only be called in between requests since it can wipe output
  * buffers!
  */
+ //缩小缓冲区 
 static void conn_shrink(conn *c) {
     assert(c != NULL);
-
+	//如果是UDP，则不需要整理
     if (IS_UDP(c->transport))
         return;
 
@@ -1879,7 +1880,7 @@ static bool authenticated(conn *c) {
     return rv;
 }
 
-// 分发命令
+// 分发命令,并设置相应的跳转状态，如read,write,closing等
 static void dispatch_bin_command(conn *c) {
     int protocol_error = 0;
 
@@ -1951,6 +1952,7 @@ static void dispatch_bin_command(conn *c) {
     }
 
     switch (c->cmd) {
+		//version
         case PROTOCOL_BINARY_CMD_VERSION:
             if (extlen == 0 && keylen == 0 && bodylen == 0) {
                 write_bin_response(c, VERSION, 0, 0, strlen(VERSION));
@@ -1958,6 +1960,7 @@ static void dispatch_bin_command(conn *c) {
                 protocol_error = 1;
             }
             break;
+		//flush
         case PROTOCOL_BINARY_CMD_FLUSH:
             if (keylen == 0 && bodylen == extlen && (extlen == 0 || extlen == 4)) {
                 bin_read_key(c, bin_read_flush_exptime, extlen);
@@ -1965,6 +1968,7 @@ static void dispatch_bin_command(conn *c) {
                 protocol_error = 1;
             }
             break;
+		//noop
         case PROTOCOL_BINARY_CMD_NOOP:
             if (extlen == 0 && keylen == 0 && bodylen == 0) {
                 write_bin_response(c, NULL, 0, 0, 0);
@@ -1972,6 +1976,7 @@ static void dispatch_bin_command(conn *c) {
                 protocol_error = 1;
             }
             break;
+		//set,add,replace
         case PROTOCOL_BINARY_CMD_SET: /* FALLTHROUGH */
         case PROTOCOL_BINARY_CMD_ADD: /* FALLTHROUGH */
         case PROTOCOL_BINARY_CMD_REPLACE:
@@ -1981,6 +1986,7 @@ static void dispatch_bin_command(conn *c) {
                 protocol_error = 1;
             }
             break;
+		//get
         case PROTOCOL_BINARY_CMD_GETQ:  /* FALLTHROUGH */
         case PROTOCOL_BINARY_CMD_GET:   /* FALLTHROUGH */
         case PROTOCOL_BINARY_CMD_GETKQ: /* FALLTHROUGH */
@@ -1991,6 +1997,7 @@ static void dispatch_bin_command(conn *c) {
                 protocol_error = 1;
             }
             break;
+		//delete
         case PROTOCOL_BINARY_CMD_DELETE:
             if (keylen > 0 && extlen == 0 && bodylen == keylen) {
                 bin_read_key(c, bin_reading_del_header, extlen);
@@ -2320,7 +2327,7 @@ static void complete_nread_binary(conn *c) {
         assert(0);
     }
 }
-
+//整理缓冲区
 static void reset_cmd_handler(conn *c) {
     c->cmd = -1;
     c->substate = bin_no_state;
@@ -2328,7 +2335,7 @@ static void reset_cmd_handler(conn *c) {
         item_remove(c->item);
         c->item = NULL;
     }
-    conn_shrink(c);
+    conn_shrink(c);//整理
 
     if (c->rbytes > 0) {
         // 如果已经读入了数据, 开始解析命令
@@ -2524,6 +2531,10 @@ typedef struct token_s {
  *      command  = tokens[ix].value;
  *   }
  */
+ //解析命令command,将解析结果存储到tokens数组中
+ //比如：有一个命令 "get aaaaaaaaaa" ，分析完以后存在tokens中的就是
+ //tokens[3] = {{value:"get",length:3},{value:"aaaaaaaaaa",length:10},{value:NULL,length:0}};
+ //返回值size_t表示tokens数组的大小
 static size_t tokenize_command(char *command, token_t *tokens, const size_t max_tokens) {
     char *s, *e;
     size_t ntokens = 0;
@@ -2979,7 +2990,7 @@ static inline void process_get_command(conn *c, token_t *tokens, size_t ntokens,
 
     return;
 }
-
+//add,set,replace,prepend,append为“更新”命令，调用同一个函数执行命令
 static void process_update_command(conn *c, token_t *tokens, const size_t ntokens, int comm, bool handle_cas) {
     char *key;
     size_t nkey;
@@ -2993,14 +3004,14 @@ static void process_update_command(conn *c, token_t *tokens, const size_t ntoken
     assert(c != NULL);
 
     set_noreply_maybe(c, tokens, ntokens);
-
+	//key过长
     if (tokens[KEY_TOKEN].length > KEY_MAX_LENGTH) {
         out_string(c, "CLIENT_ERROR bad command line format");
         return;
     }
 
-    key = tokens[KEY_TOKEN].value;
-    nkey = tokens[KEY_TOKEN].length;
+    key = tokens[KEY_TOKEN].value;//键名
+    nkey = tokens[KEY_TOKEN].length;//键长度
 
     if (! (safe_strtoul(tokens[2].value, (uint32_t *)&flags)
            && safe_strtol(tokens[3].value, &exptime_int)
@@ -3035,7 +3046,7 @@ static void process_update_command(conn *c, token_t *tokens, const size_t ntoken
     if (settings.detail_enabled) {
         stats_prefix_record_set(key, nkey);
     }
-
+	//分配内存
     it = item_alloc(key, nkey, flags, realtime(exptime), vlen);
 
     if (it == 0) {
@@ -3065,6 +3076,7 @@ static void process_update_command(conn *c, token_t *tokens, const size_t ntoken
     c->ritem = ITEM_data(it);
     c->rlbytes = it->nbytes;
     c->cmd = comm;
+	//目前还没有给key赋值相应的value，需要继续进入状态机，执行命令的其他工作
     conn_set_state(c, conn_nread);
 }
 
@@ -3336,9 +3348,33 @@ static void process_slabs_automove_command(conn *c, token_t *tokens, const size_
     out_string(c, "OK");
     return;
 }
-
+// process_command注释参考：http://www.cnblogs.com/lrxing/p/4273387.html
+/*
+ * process_command 在memcached中是用来处理用户发送的命令的，
+ * 包括get set，add，delete，replace，stats，flush_all等常用的和不常用的命令，全在这进行处理的。
+ * 一共有两个参数，conn *c 和字符串指针 char *command ；
+ * 关于conn结构体就先不说了，反正它是整个memcached中最重要的结构体就行了，等以后研究明白了再说，先从整体上领会精神吧。
+ * 这里我想说一下的是， memcached 和 redis 在处理命令上的想法还是有很大差别的，
+ * 在 redis 里面，你要是想看一下一共支持多少命令，每个命令对应的函数，很方便，都在一个名叫 redisCommandTable 的结构体数组里面，一目了然；
+ * 但是 memcached 却不是这样，我刚开始也是按照看 redis 源码的方式去找 memcached 中的，但是找了很久也没有发现，原因就是作者把支持的所有命令都散落在下面这个函数中了。
+ * 先说一下 memcached 是怎么从 command 字符串中分解出具体的命令和对应的参数的。
+ * 在函数中用到了一个结构体数组： tokens[MAX_TOKENS] ，它其实是用来存放分析完的 command 结果用的，分析工作在函数 tokenize_command 中进行。
+ * 如：有一个命令 "get aaaaaaaaaa" ，分析完以后存在tokens中的就是
+ * tokens[3] = {{value:"get",length:3},{value:"aaaaaaaaaa",length:10},{value:NULL,length:0}};
+ * 函数 tokenize_command 返回的是一个int型数据 ntokens，记录了 tokens 的大小，表示从 command 命令中分解出了几条数据，
+ * 当然 ntokens 的值会比实际中 command 中包含的数据多1，因为字符串结尾的'\0'也要占一样。
+ * 
+ * 下面说说以 "get aaaaaaaaaa" 命令为例，具体的命令分析和函数调用过程：
+ * 当一条命令 "get aaaaaaaaaa" 传到 process_command 中之后，先调用负责解析命令的函数tokenize_command，
+ * 将解析后的命令存储在tokens数组中，结果如上面的tokens[3]，并返回ntokens，说明command中包含几个字段（这里得到的是3），
+ * 然后根据字段的数目进行判断应该到哪个条件语句去进行比对，当确认之后，就会跳到对应的条件语句中
+ * 所以这里应该到 tokenize_command 下面的第一个if语句中，然后使用tokens[0].value，也就是tokens数组中存储的get命令和字符串"get"进行比较，
+ * 匹配，则调用对应的函数，这里调用process_get_command(c, tokens, ntokens, false);
+ * 然后 process_command 的使命就结束了。
+ * 以下代码在memcached-1.4.22/memcached.c
+ */
 static void process_command(conn *c, char *command) {
-
+	//tokens存储命令解析结果
     token_t tokens[MAX_TOKENS];
     size_t ntokens;
     int comm;
@@ -3362,8 +3398,9 @@ static void process_command(conn *c, char *command) {
         out_string(c, "SERVER_ERROR out of memory preparing response");
         return;
     }
-
+	//解析命令
     ntokens = tokenize_command(command, tokens, MAX_TOKENS);
+	//下面通过token.value进行命令匹配，调用相应的函数
     if (ntokens >= 3 &&
         ((strcmp(tokens[COMMAND_TOKEN].value, "get") == 0) ||
          (strcmp(tokens[COMMAND_TOKEN].value, "bget") == 0))) {
@@ -3508,7 +3545,7 @@ static int try_read_command(conn *c) {
     assert(c != NULL);
     assert(c->rcurr <= (c->rbuf + c->rsize));
     assert(c->rbytes > 0);
-
+	//memcached支持二进制协议和文本协议
     if (c->protocol == negotiating_prot || c->transport == udp_transport)  {
         if ((unsigned char)c->rbuf[0] == (unsigned char)PROTOCOL_BINARY_REQ) {
             c->protocol = binary_prot;
@@ -3521,11 +3558,12 @@ static int try_read_command(conn *c) {
                     prot_text(c->protocol));
         }
     }
-
+	//二进制协议
     if (c->protocol == binary_prot) {
         /* Do we have the complete packet header? */
+		//读取到的数据长度小于数据包头部大小，即没有读取到完整数据
         if (c->rbytes < sizeof(c->binary_header)) {
-            /* need more data! */
+            /* need more data! 返回继续读取数据*/
             return 0;
         } else {
 #ifdef NEED_ALIGN
@@ -3561,7 +3599,7 @@ static int try_read_command(conn *c) {
             c->binary_header.request.keylen = ntohs(req->request.keylen);
             c->binary_header.request.bodylen = ntohl(req->request.bodylen);
             c->binary_header.request.cas = ntohll(req->request.cas);
-
+			//判断魔数是否合法，魔数用来防止TCP粘包???
             if (c->binary_header.request.magic != PROTOCOL_BINARY_REQ) {
                 if (settings.verbose) {
                     fprintf(stderr, "Invalid magic:  %x\n",
@@ -3585,7 +3623,7 @@ static int try_read_command(conn *c) {
             /* clear the returned cas value */
             c->cas = 0;
 
-
+			//数据处理
             dispatch_bin_command(c);
 
             c->rbytes -= sizeof(c->binary_header);
@@ -3641,6 +3679,7 @@ static int try_read_command(conn *c) {
 /*
  * read a UDP request.
  */
+ //udp,读取网络数据
 static enum try_read_result try_read_udp(conn *c) {
     int res;
 
@@ -3696,6 +3735,7 @@ static enum try_read_result try_read_udp(conn *c) {
  *
  * @return enum try_read_result
  */
+ //tcp,读取网络数据
 static enum try_read_result try_read_network(conn *c) {
     enum try_read_result gotdata = READ_NO_DATA_RECEIVED;
     int res;
@@ -3708,7 +3748,7 @@ static enum try_read_result try_read_network(conn *c) {
             memmove(c->rbuf, c->rcurr, c->rbytes);
         c->rcurr = c->rbuf;
     }
-
+	//循环读取
     while (1) {
         if (c->rbytes >= c->rsize) {
             // 如果分配的次数超过 4 次, 退出
@@ -3717,6 +3757,7 @@ static enum try_read_result try_read_network(conn *c) {
             }
             ++num_allocs;
             char *new_rbuf = realloc(c->rbuf, c->rsize * 2);
+			//分配内存失败
             if (!new_rbuf) {
                 if (settings.verbose > 0)
                     fprintf(stderr, "Couldn't realloc input buffer\n");
@@ -3725,14 +3766,14 @@ static enum try_read_result try_read_network(conn *c) {
                 c->write_and_go = conn_closing;
                 return READ_MEMORY_ERROR;
             }
-            c->rcurr = c->rbuf = new_rbuf;
-            c->rsize *= 2;
+            c->rcurr = c->rbuf = new_rbuf;//读缓冲区指向新的缓冲区
+            c->rsize *= 2;//读缓冲区的大小扩大2倍
         }
 
         // 计算剩余的空间
         int avail = c->rsize - c->rbytes;
 
-        // 读数据.
+        // 非阻塞读数据
         // 技巧: 每次只从 socket 中读取定量的数据. 如果已读的数据大小 == avail, 说明还有数据可读, 循环继续; 否则, 已经读取完毕, 结束循环
         res = read(c->sfd, c->rbuf + c->rbytes, avail);
 
@@ -3753,6 +3794,7 @@ static enum try_read_result try_read_network(conn *c) {
         if (res == 0) {
             return READ_ERROR;
         }
+		//非阻塞读
         if (res == -1) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 break;
@@ -3762,15 +3804,15 @@ static enum try_read_result try_read_network(conn *c) {
     }
     return gotdata;
 }
-
+//更新libevent状态，也就是删除libevent事件后，重新注册libevent事件 
 static bool update_event(conn *c, const int new_flags) {
     assert(c != NULL);
 
     struct event_base *base = c->event.ev_base;
     if (c->ev_flags == new_flags)
         return true;
-    if (event_del(&c->event) == -1) return false;
-    event_set(&c->event, c->sfd, new_flags, event_handler, (void *)c);
+    if (event_del(&c->event) == -1) return false;//删除旧事件
+    event_set(&c->event, c->sfd, new_flags, event_handler, (void *)c);//重新添加事件
     event_base_set(base, &c->event);
     c->ev_flags = new_flags;
     if (event_add(&c->event, 0) == -1) return false;
@@ -3900,7 +3942,7 @@ static void drive_machine(conn *c) {
         case conn_listening:
             addrlen = sizeof(addr);
 
-            // 接受连接
+            // 接受连接，这是是非阻塞编程
             if ((sfd = accept(c->sfd, (struct sockaddr *)&addr, &addrlen)) == -1) {
 
                 // 失败了
@@ -3918,7 +3960,7 @@ static void drive_machine(conn *c) {
                 }// if
                 break;
             }
-
+			//连接成功，设置文件描述符为非阻塞
             if ((flags = fcntl(sfd, F_GETFL, 0)) < 0 ||
                 fcntl(sfd, F_SETFL, flags | O_NONBLOCK) < 0) {
                 perror("setting O_NONBLOCK");
@@ -3949,13 +3991,13 @@ static void drive_machine(conn *c) {
 
         // 等待新的命令请求
         case conn_waiting:
-            if (!update_event(c, EV_READ | EV_PERSIST)) {
+            if (!update_event(c, EV_READ | EV_PERSIST)) { //修改libevent状态，读取数据
                 if (settings.verbose > 0)
                     fprintf(stderr, "Couldn't update event\n");
                 conn_set_state(c, conn_closing);
                 break;
             }
-
+			//进入读数据状态 
             conn_set_state(c, conn_read);
             stop = true;
             break;
@@ -3966,6 +4008,7 @@ static void drive_machine(conn *c) {
             // 读完请求后, 转换 conn 的状态
             switch (res) {
             // READ_NO_DATA_RECEIVED, READ_DATA_RECEIVED, READ_ERROR, READ_MEMORY_ERROR 四种状态只有 try_read_udp() try_read_network() 会返回
+			// 未读取到数据
             case READ_NO_DATA_RECEIVED:
                 conn_set_state(c, conn_waiting);
                 break;
@@ -3973,6 +4016,7 @@ static void drive_machine(conn *c) {
             case READ_DATA_RECEIVED:
                 conn_set_state(c, conn_parse_cmd);
                 break;
+			// 读取发生错误
             case READ_ERROR:
                 conn_set_state(c, conn_closing);
                 break;
@@ -4026,6 +4070,7 @@ static void drive_machine(conn *c) {
             break;
 
         // 真正执行命令的地方
+		//案例分析，详情请参考http://www.oschina.net/question/1441503_194178
         case conn_nread:
             // 如果已经把所有的数据读完了, 直接执行命令
             if (c->rlbytes == 0) {
@@ -4037,6 +4082,7 @@ static void drive_machine(conn *c) {
             // 看是否还有剩下未读的数据
             if (c->rbytes > 0) {
                 int tocopy = c->rbytes > c->rlbytes ? c->rlbytes : c->rbytes;
+				//对于add,set,replace等命令，下面就是key赋值value的具体操作
                 if (c->ritem != c->rcurr) {
                     memmove(c->ritem, c->rcurr, tocopy);
                 }
