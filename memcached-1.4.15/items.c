@@ -77,6 +77,7 @@ uint64_t get_cas_id(void) {
  *
  * Returns the total size of the header.
  */
+ //计算一个Item的长度，根据这个来定位slabclass的id
 static size_t item_make_header(const uint8_t nkey, const int flags, const int nbytes,
                      char *suffix, uint8_t *nsuffix) {
     /* suffix is defined at 40 chars elsewhere.. */

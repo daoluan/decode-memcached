@@ -83,7 +83,7 @@ static void slabs_preallocate (const unsigned int maxslabs);
  * Given object size, return id to use when allocating/freeing memory for object
  * 0 means error: can't store such a large object
  */
-
+//memcached在定位item时，都是使用slabs_clsid函数，传入参数为item大小，返回值为classid.
 unsigned int slabs_clsid(const size_t size) {
     int res = POWER_SMALLEST;
 

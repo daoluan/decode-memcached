@@ -3349,30 +3349,27 @@ static void process_slabs_automove_command(conn *c, token_t *tokens, const size_
     return;
 }
 // process_command注释参考：http://www.cnblogs.com/lrxing/p/4273387.html
-/*
- * process_command 在memcached中是用来处理用户发送的命令的，
- * 包括get set，add，delete，replace，stats，flush_all等常用的和不常用的命令，全在这进行处理的。
- * 一共有两个参数，conn *c 和字符串指针 char *command ；
- * 关于conn结构体就先不说了，反正它是整个memcached中最重要的结构体就行了，等以后研究明白了再说，先从整体上领会精神吧。
- * 这里我想说一下的是， memcached 和 redis 在处理命令上的想法还是有很大差别的，
- * 在 redis 里面，你要是想看一下一共支持多少命令，每个命令对应的函数，很方便，都在一个名叫 redisCommandTable 的结构体数组里面，一目了然；
- * 但是 memcached 却不是这样，我刚开始也是按照看 redis 源码的方式去找 memcached 中的，但是找了很久也没有发现，原因就是作者把支持的所有命令都散落在下面这个函数中了。
- * 先说一下 memcached 是怎么从 command 字符串中分解出具体的命令和对应的参数的。
- * 在函数中用到了一个结构体数组： tokens[MAX_TOKENS] ，它其实是用来存放分析完的 command 结果用的，分析工作在函数 tokenize_command 中进行。
- * 如：有一个命令 "get aaaaaaaaaa" ，分析完以后存在tokens中的就是
- * tokens[3] = {{value:"get",length:3},{value:"aaaaaaaaaa",length:10},{value:NULL,length:0}};
- * 函数 tokenize_command 返回的是一个int型数据 ntokens，记录了 tokens 的大小，表示从 command 命令中分解出了几条数据，
- * 当然 ntokens 的值会比实际中 command 中包含的数据多1，因为字符串结尾的'\0'也要占一样。
- * 
- * 下面说说以 "get aaaaaaaaaa" 命令为例，具体的命令分析和函数调用过程：
- * 当一条命令 "get aaaaaaaaaa" 传到 process_command 中之后，先调用负责解析命令的函数tokenize_command，
- * 将解析后的命令存储在tokens数组中，结果如上面的tokens[3]，并返回ntokens，说明command中包含几个字段（这里得到的是3），
- * 然后根据字段的数目进行判断应该到哪个条件语句去进行比对，当确认之后，就会跳到对应的条件语句中
- * 所以这里应该到 tokenize_command 下面的第一个if语句中，然后使用tokens[0].value，也就是tokens数组中存储的get命令和字符串"get"进行比较，
- * 匹配，则调用对应的函数，这里调用process_get_command(c, tokens, ntokens, false);
- * 然后 process_command 的使命就结束了。
- * 以下代码在memcached-1.4.22/memcached.c
- */
+// process_command 在memcached中是用来处理用户发送的命令的，
+// 包括get set，add，delete，replace，stats，flush_all等常用的和不常用的命令，全在这进行处理的。
+// 一共有两个参数，conn *c 和字符串指针 char *command ；
+// 关于conn结构体就先不说了，反正它是整个memcached中最重要的结构体就行了，等以后研究明白了再说，先从整体上领会精神吧。
+// 这里我想说一下的是， memcached 和 redis 在处理命令上的想法还是有很大差别的，
+// 在 redis 里面，你要是想看一下一共支持多少命令，每个命令对应的函数，很方便，都在一个名叫 redisCommandTable 的结构体数组里面，一目了然；
+// 但是 memcached 却不是这样，我刚开始也是按照看 redis 源码的方式去找 memcached 中的，但是找了很久也没有发现，原因就是作者把支持的所有命令都散落在下面这个函数中了。
+// 先说一下 memcached 是怎么从 command 字符串中分解出具体的命令和对应的参数的。
+// 在函数中用到了一个结构体数组： tokens[MAX_TOKENS] ，它其实是用来存放分析完的 command 结果用的，分析工作在函数 tokenize_command 中进行。
+// 如：有一个命令 "get aaaaaaaaaa" ，分析完以后存在tokens中的就是
+// tokens[3] = {{value:"get",length:3},{value:"aaaaaaaaaa",length:10},{value:NULL,length:0}};
+// 函数 tokenize_command 返回的是一个int型数据 ntokens，记录了 tokens 的大小，表示从 command 命令中分解出了几条数据，
+// 当然 ntokens 的值会比实际中 command 中包含的数据多1，因为字符串结尾的'\0'也要占一样.
+// 下面说说以 "get aaaaaaaaaa" 命令为例，具体的命令分析和函数调用过程：
+// 当一条命令 "get aaaaaaaaaa" 传到 process_command 中之后，先调用负责解析命令的函数tokenize_command，
+// 将解析后的命令存储在tokens数组中，结果如上面的tokens[3]，并返回ntokens，说明command中包含几个字段（这里得到的是3），
+// 然后根据字段的数目进行判断应该到哪个条件语句去进行比对，当确认之后，就会跳到对应的条件语句中
+// 所以这里应该到 tokenize_command 下面的第一个if语句中，然后使用tokens[0].value，也就是tokens数组中存储的get命令和字符串"get"进行比较，
+// 匹配，则调用对应的函数，这里调用process_get_command(c, tokens, ntokens, false);
+// 然后 process_command 的使命就结束了。
+// 以下代码在memcached-1.4.22/memcached.c
 static void process_command(conn *c, char *command) {
 	//tokens存储命令解析结果
     token_t tokens[MAX_TOKENS];
