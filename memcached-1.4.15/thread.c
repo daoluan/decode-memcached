@@ -81,9 +81,10 @@ static pthread_cond_t init_cond;
 
 
 static void thread_libevent_process(int fd, short which, void *arg);
-
+//增加引用计数
 unsigned short refcount_incr(unsigned short *refcount) {
 #ifdef HAVE_GCC_ATOMICS
+    //__sync_add_and_fetch是gcc下提供的原子操作函数
     return __sync_add_and_fetch(refcount, 1);
 #elif defined(__sun)
     return atomic_inc_ushort_nv(refcount);
@@ -96,9 +97,10 @@ unsigned short refcount_incr(unsigned short *refcount) {
     return res;
 #endif
 }
-
+//减少引用计数
 unsigned short refcount_decr(unsigned short *refcount) {
 #ifdef HAVE_GCC_ATOMICS
+    //__sync_sub_and_fetch是gcc下提供的原子操作函数
     return __sync_sub_and_fetch(refcount, 1);
 #elif defined(__sun)
     return atomic_dec_ushort_nv(refcount);
@@ -120,12 +122,15 @@ void item_lock_global(void) {
 void item_unlock_global(void) {
     mutex_unlock(&item_global_lock);
 }
-
+//item加锁
 void item_lock(uint32_t hv) {
+    //获取线程私有变量
     uint8_t *lock_type = pthread_getspecific(item_lock_type_key);
     if (likely(*lock_type == ITEM_LOCK_GRANULAR)) {
+        //对桶加锁
         mutex_lock(&item_locks[(hv & hashmask(hashpower)) % item_lock_count]);
     } else {
+        //所有item加锁，全局级别
         mutex_lock(&item_global_lock);
     }
 }
@@ -173,16 +178,17 @@ static void register_thread_initialized(void) {
     pthread_cond_signal(&init_cond);
     pthread_mutex_unlock(&init_lock);
 }
-
+// 发送消息，切换锁级别
 void switch_item_lock_type(enum item_lock_types type) {
     char buf[1];
     int i;
 
     switch (type) {
-        // 需要更改的状态
+        //用l表示ITEM_LOCK_GRANULAR 段级别锁
         case ITEM_LOCK_GRANULAR:
             buf[0] = 'l';
             break;
+        //用g表示ITEM_LOCK_GLOBAL 全局级别锁
         case ITEM_LOCK_GLOBAL:
             buf[0] = 'g';
             break;
@@ -195,11 +201,13 @@ void switch_item_lock_type(enum item_lock_types type) {
     pthread_mutex_lock(&init_lock);
     init_count = 0;
     for (i = 0; i < settings.num_threads; i++) {
+        //通过向worker监听的管道写入一个字符通知worker线程
         if (write(threads[i].notify_send_fd, buf, 1) != 1) {
             perror("Failed writing to notify pipe");
             /* TODO: This is a fatal problem. Can it ever happen temporarily? */
         }
     }
+    //等待所有的workers线程都把锁切换到type指明的锁类型
     wait_for_thread_registration(settings.num_threads);
     pthread_mutex_unlock(&init_lock);
 }
@@ -311,7 +319,7 @@ static void create_worker(void *(*func)(void *), void *arg) {
     int             ret;
 
     pthread_attr_init(&attr);
-	//线程处理函数为:worker_libevent
+    //线程处理函数为:worker_libevent
     if ((ret = pthread_create(&thread, &attr, func, arg)) != 0) {
         fprintf(stderr, "Can't create thread: %s\n",
                 strerror(ret));
@@ -349,7 +357,7 @@ static void setup_thread(LIBEVENT_THREAD *me) {
     // 在线程数据结构初始化的时候, 为 me->notify_receive_fd 读管道注册读事件, 回调函数是 thread_libevent_process()
     event_set(&me->notify_event, me->notify_receive_fd,
               EV_READ | EV_PERSIST, thread_libevent_process, me);
-	//为event_base实例注册nofify_event事件，请参考libevent手册
+    //为event_base实例注册nofify_event事件，请参考libevent手册
     event_base_set(me->base, &me->notify_event);
 
     if (event_add(&me->notify_event, 0) == -1) {
@@ -395,7 +403,7 @@ static void *worker_libevent(void *arg) {
      * all item_lock calls...
      */
     me->item_lock_type = ITEM_LOCK_GRANULAR;
-	//设置线程的属性
+    //设置线程的私有数据，锁的级别属性
     pthread_setspecific(item_lock_type_key, &me->item_lock_type);
 
     register_thread_initialized();
@@ -428,7 +436,7 @@ static void thread_libevent_process(int fd, short which, void *arg) {
 
     if (NULL != item) {
         // 为新的请求建立一个连接结构体. 连接其实已经建立, 这里只是为了填充连接结构体. 最关键的动作是在 libevent 中注册了事件, 回调函数是 event_handler()
-		//event_handler的执行流程最终会进入业务处理的状态机中
+        //event_handler的执行流程最终会进入业务处理的状态机中
         conn *c = conn_new(item->sfd, item->init_state, item->event_flags,
                            item->read_buffer_size, item->transport, me->base);
         if (c == NULL) {
@@ -450,11 +458,12 @@ static void thread_libevent_process(int fd, short which, void *arg) {
         break;
 
     /* we were told to flip the lock type and report in */
+    //切换为段锁
     case 'l':
     me->item_lock_type = ITEM_LOCK_GRANULAR;
     register_thread_initialized();
         break;
-
+	//切换为全局锁
     case 'g':
     me->item_lock_type = ITEM_LOCK_GLOBAL;
     register_thread_initialized();
@@ -833,6 +842,7 @@ void thread_init(int nthreads, struct event_base *main_base) {
 
     /* Want a wide lock table, but don't waste memory */
     // 锁表?
+	// nthreads表示线程的数量
     if (nthreads < 3) {
         power = 10;
     } else if (nthreads < 4) {
@@ -845,10 +855,10 @@ void thread_init(int nthreads, struct event_base *main_base) {
         power = 13;
     }
 
-    // 预申请那么多的锁, 拿来做什么
-    // hashsize = 2^n
+    // memcached有两种锁机制，可参考：http://blog.csdn.net/luotuo44/article/details/42913549
+    // hashsize = 2^n，若干个桶共用一个锁，所以需要很多锁
     item_lock_count = hashsize(power);
-
+    // 分配大量锁
     item_locks = calloc(item_lock_count, sizeof(pthread_mutex_t));
     if (! item_locks) {
         perror("Can't allocate item locks");
@@ -858,16 +868,16 @@ void thread_init(int nthreads, struct event_base *main_base) {
     for (i = 0; i < item_lock_count; i++) {
         pthread_mutex_init(&item_locks[i], NULL);
     }
-	
-	//创建线程的局部变量，该局部变量的名称为item_lock_type_key,用于保存主hash表所持有的锁的类型 
-    //主hash表在进行扩容时，该锁类型会变为全局的锁，否则(不在扩容过程中)，则是局部锁
-	//reference:http://blog.csdn.net/lcli2009/article/details/21525839
+
+    // 创建线程的局部变量，该局部变量的名称为item_lock_type_key,用于保存主hash表所持有的锁的类型 
+    // 主hash表在进行扩容时，该锁类型会变为全局的锁，否则(不在扩容过程中)，则是局部锁
+    // reference:http://blog.csdn.net/lcli2009/article/details/21525839
     pthread_key_create(&item_lock_type_key, NULL);
     pthread_mutex_init(&item_global_lock, NULL);
 
 
     // LIBEVENT_THREAD 是结合 libevent 使用的结构体, event_base, 读写管道
-	//为线程组分配nthreads个空间
+    //为线程组分配nthreads个空间
     threads = calloc(nthreads, sizeof(LIBEVENT_THREAD));
     if (! threads) {
         perror("Can't allocate thread descriptors");
@@ -910,4 +920,3 @@ void thread_init(int nthreads, struct event_base *main_base) {
     wait_for_thread_registration(nthreads);
     pthread_mutex_unlock(&init_lock);
 }
-

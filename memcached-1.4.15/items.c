@@ -1,4 +1,5 @@
 /* -*- Mode: C; tab-width: 4; c-basic-offset: 4; indent-tabs-mode: nil -*- */
+//部分注释参考：http://blog.csdn.net/luotuo44/article/details/42869325
 #include "memcached.h"
 #include <sys/stat.h>
 #include <sys/socket.h>
@@ -36,9 +37,13 @@ typedef struct {
     uint64_t evicted_unfetched;
 } itemstats_t;
 
+//以下数组用来管理LRU队列，可以参考：http://blog.csdn.net/luotuo44/article/details/42869325
+//指向每一个LRU队列头
 static item *heads[LARGEST_ID];
+//指向每一个LRU队列尾
 static item *tails[LARGEST_ID];
 static itemstats_t itemstats[LARGEST_ID];
+//每一个LRU队列有多少个item 
 static unsigned int sizes[LARGEST_ID];
 
 void item_stats_reset(void) {
@@ -92,17 +97,19 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
     uint8_t nsuffix;
     item *it = NULL;
     char suffix[40];
+    //计算这个item的空间
     size_t ntotal = item_make_header(nkey + 1, flags, nbytes, suffix, &nsuffix);
     if (settings.use_cas) {
         ntotal += sizeof(uint64_t);
     }
-
+    //根据大小判断从属于哪个slab
     unsigned int id = slabs_clsid(ntotal);
     if (id == 0)
         return 0;
 
     mutex_lock(&cache_lock);
     /* do a quick check if we have any expired items in the tail.. */
+    //在LRU中尝试5次还没合适的空间，则执行申请空间的操作
     int tries = 5;
     int tried_alloc = 0;
     item *search;
@@ -137,6 +144,7 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
         }
 
         /* Expired or flushed */
+        // search指向的item过期了，则直接复用这块内存
         if ((search->exptime != 0 && search->exptime < current_time)
             || (search->time <= oldest_live && oldest_live <= current_time)) {
             itemstats[id].reclaimed++;
@@ -148,7 +156,10 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
             do_item_unlink_nolock(it, hv);
             /* Initialize the item block: */
             it->slabs_clsid = 0;
-        } else if ((it = slabs_alloc(ntotal, id)) == NULL) {
+        }
+        //此刻，过期失效的item没有找到，申请内存又失败了。看来只能使用
+        //LRU淘汰一个item(即使这个item并没有过期失效)
+        else if ((it = slabs_alloc(ntotal, id)) == NULL) {
             tried_alloc = 1;
             if (settings.evict_to_free == 0) {
                 itemstats[id].outofmemory++;
@@ -184,7 +195,7 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
             item_trylock_unlock(hold_lock);
         break;
     }
-
+    //从slab分配器中申请内存
     if (!tried_alloc && (tries == 0 || search == NULL))
         it = slabs_alloc(ntotal, id);
 
@@ -249,7 +260,7 @@ bool item_size_ok(const size_t nkey, const int flags, const int nbytes) {
 
     return slabs_clsid(ntotal) != 0;
 }
-
+//将item插入到LRU队列的头部 
 static void item_link_q(item *it) { /* item is the new head */
     item **head, **tail;
     assert(it->slabs_clsid < LARGEST_ID);
@@ -259,42 +270,47 @@ static void item_link_q(item *it) { /* item is the new head */
     tail = &tails[it->slabs_clsid];
     assert(it != *head);
     assert((*head && *tail) || (*head == 0 && *tail == 0));
+    //头插法插入该item
     it->prev = 0;
     it->next = *head;
     if (it->next) it->next->prev = it;
     *head = it;
     if (*tail == 0) *tail = it;
+    //个数加1
     sizes[it->slabs_clsid]++;
     return;
 }
-
+//将it从对应的LRU队列中删除
 static void item_unlink_q(item *it) {
     item **head, **tail;
     assert(it->slabs_clsid < LARGEST_ID);
     head = &heads[it->slabs_clsid];
     tail = &tails[it->slabs_clsid];
-
+    //首节点
     if (*head == it) {
         assert(it->prev == 0);
         *head = it->next;
     }
+    //尾节点
     if (*tail == it) {
         assert(it->next == 0);
         *tail = it->prev;
     }
     assert(it->next != it);
     assert(it->prev != it);
-
+    //前后节点链接
     if (it->next) it->next->prev = it->prev;
     if (it->prev) it->prev->next = it->next;
     sizes[it->slabs_clsid]--;
     return;
 }
-
+//将item插入到哈希表和LRU队列中，hv为哈希值
 int do_item_link(item *it, const uint32_t hv) {
     MEMCACHED_ITEM_LINK(ITEM_key(it), it->nkey, it->nbytes);
+    //确保这个item已经从slab分配出去并且还没插入到LRU队列中
     assert((it->it_flags & (ITEM_LINKED|ITEM_SLABBED)) == 0);
     mutex_lock(&cache_lock);
+    //加入link标记
     it->it_flags |= ITEM_LINKED;
     it->time = current_time;
 
@@ -306,14 +322,17 @@ int do_item_link(item *it, const uint32_t hv) {
 
     /* Allocate a new CAS ID on link. */
     ITEM_set_cas(it, (settings.use_cas) ? get_cas_id() : 0);
+    //插入到hash表中
     assoc_insert(it, hv);
+    //item插入到链表中
     item_link_q(it);
+    //引用计数加1
     refcount_incr(&it->refcount);
     mutex_unlock(&cache_lock);
 
     return 1;
 }
-
+//从哈希表和LRU中删除
 void do_item_unlink(item *it, const uint32_t hv) {
     MEMCACHED_ITEM_UNLINK(ITEM_key(it), it->nkey, it->nbytes);
     mutex_lock(&cache_lock);
@@ -323,8 +342,11 @@ void do_item_unlink(item *it, const uint32_t hv) {
         stats.curr_bytes -= ITEM_ntotal(it);
         stats.curr_items -= 1;
         STATS_UNLOCK();
+        //从哈希表中删除
         assoc_delete(ITEM_key(it), it->nkey, hv);
+        //从链表中删除
         item_unlink_q(it);
+        //向slab归还这个item
         do_item_remove(it);
     }
     mutex_unlock(&cache_lock);
@@ -344,25 +366,29 @@ void do_item_unlink_nolock(item *it, const uint32_t hv) {
         do_item_remove(it);
     }
 }
-
+//向slab归还item
 void do_item_remove(item *it) {
     MEMCACHED_ITEM_REMOVE(ITEM_key(it), it->nkey, it->nbytes);
     assert((it->it_flags & ITEM_SLABBED) == 0);
-
+    //引用计数为0时归还
     if (refcount_decr(&it->refcount) == 0) {
         item_free(it);
     }
 }
-
+//按访问时间，更新在LRU队列的位置
 void do_item_update(item *it) {
     MEMCACHED_ITEM_UPDATE(ITEM_key(it), it->nkey, it->nbytes);
     if (it->time < current_time - ITEM_UPDATE_INTERVAL) {
         assert((it->it_flags & ITEM_SLABBED) == 0);
 
         mutex_lock(&cache_lock);
+        //达到更新时间间隔
         if ((it->it_flags & ITEM_LINKED) != 0) {
+            //从LUR中删除
             item_unlink_q(it);
+            //更新访问时间
             it->time = current_time;
+            //插入到LRU队列头部
             item_link_q(it);
         }
         mutex_unlock(&cache_lock);
@@ -551,6 +577,10 @@ item *do_item_get(const char *key, const size_t nkey, const uint32_t hv) {
     }
 
     if (it != NULL) {
+        //settings.oldest_live初始化值为0
+        //检测用户是否使用过flush_all命令，删除所有item
+        //it->time <= settings.oldest_live就说明用户在使用flush_all命令的时候
+        //就已经存在该item了。那么该item是要删除的
         if (settings.oldest_live != 0 && settings.oldest_live <= current_time &&
             it->time <= settings.oldest_live) {
             do_item_unlink(it, hv);
@@ -559,7 +589,9 @@ item *do_item_get(const char *key, const size_t nkey, const uint32_t hv) {
             if (was_found) {
                 fprintf(stderr, " -nuked by flush");
             }
-        } else if (it->exptime != 0 && it->exptime <= current_time) {
+        } 
+        //该item已经过期失效了
+        else if (it->exptime != 0 && it->exptime <= current_time) {
             do_item_unlink(it, hv);
             do_item_remove(it);
             it = NULL;
@@ -588,6 +620,7 @@ item *do_item_touch(const char *key, size_t nkey, uint32_t exptime,
 }
 
 /* expires items that are more recent than the oldest_live setting. */
+//flush命令删除过期的item，其中oldest_live记录收到的flush_all命令的时间
 void do_item_flush_expired(void) {
     int i;
     item *iter, *next;

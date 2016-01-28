@@ -105,7 +105,7 @@ void slabs_init(const size_t limit, const double factor, const bool prealloc) {
     unsigned int size = sizeof(item) + settings.chunk_size;
 
     mem_limit = limit;
-	//支持预分配
+    //支持预分配
     if (prealloc) {
         /* Allocate everything in a big chunk with malloc */
         mem_base = malloc(mem_limit);//申请空间，mem_base记录空间
@@ -117,9 +117,9 @@ void slabs_init(const size_t limit, const double factor, const bool prealloc) {
                     " one large chunk.\nWill allocate in smaller chunks\n");
         }
     }
-	//初始化slabclass数组空间，置0
+    //初始化slabclass数组空间，置0
     memset(slabclass, 0, sizeof(slabclass));
-	//开始分配,每个slab的大小按增长因子递增
+    //开始分配,每个slab的大小按增长因子递增
     while (++i < POWER_LARGEST && size <= settings.item_size_max / factor) {
         /* Make sure items are always n-byte aligned */
         if (size % CHUNK_ALIGN_BYTES)//执行对齐操作，这里CHUNK_ALIGN_BYTES是8bytes
@@ -133,7 +133,7 @@ void slabs_init(const size_t limit, const double factor, const bool prealloc) {
                     i, slabclass[i].size, slabclass[i].perslab);
         }
     }
-	//循环结束时，size已经增长到1M 
+    //循环结束时，size已经增长到1M 
     power_largest = i;
     slabclass[power_largest].size = settings.item_size_max;
     slabclass[power_largest].perslab = 1;
@@ -150,7 +150,7 @@ void slabs_init(const size_t limit, const double factor, const bool prealloc) {
         }
 
     }
-	//分配每个slab的内存空间，传入最大已经初始化的最大slab编号
+    //分配每个slab的内存空间，传入最大已经初始化的最大slab编号
     if (prealloc) {
         slabs_preallocate(power_largest);
     }
@@ -169,7 +169,7 @@ static void slabs_preallocate (const unsigned int maxslabs) {
     for (i = POWER_SMALLEST; i <= POWER_LARGEST; i++) {
         if (++prealloc > maxslabs)
             return;
-		//执行分配操作，对第i个slabclass执行分配操作
+        //执行分配操作，对第i个slabclass执行分配操作
         if (do_slabs_newslab(i) == 0) {
             fprintf(stderr, "Error while preallocating slab memory!\n"
                 "If using -L or other prealloc options, max memory must be "
@@ -393,17 +393,17 @@ static void *memory_allocate(size_t size) {
         ret = malloc(size);
     } else {
         ret = mem_current;
-		//剩余空间不足
+        //剩余空间不足
         if (size > mem_avail) {
             return NULL;
         }
 
         /* mem_current pointer _must_ be aligned!!! */
         //字节对齐
-		if (size % CHUNK_ALIGN_BYTES) {
+        if (size % CHUNK_ALIGN_BYTES) {
             size += CHUNK_ALIGN_BYTES - (size % CHUNK_ALIGN_BYTES);
         }
-		//更新当前空间指针
+        //更新当前空间指针
         mem_current = ((char*)mem_current) + size;
         if (size < mem_avail) {
             mem_avail -= size;

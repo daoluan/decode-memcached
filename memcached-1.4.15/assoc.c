@@ -65,7 +65,7 @@ void assoc_init(const int hashtable_init) {
     if (hashtable_init) {
         hashpower = hashtable_init;
     }
-	//分配空间,hashsize就是哈希表长度
+    //分配空间,hashsize就是哈希表长度
     primary_hashtable = calloc(hashsize(hashpower), sizeof(void *));
     if (! primary_hashtable) {
         fprintf(stderr, "Failed to init hashtable.\n");
@@ -91,7 +91,7 @@ item *assoc_find(const char *key, const size_t nkey, const uint32_t hv) {
     {
         it = old_hashtable[oldbucket];
     } else {
-		//由哈希值判断这个key是属于那个桶(bucket)的
+        //由哈希值判断这个key是属于那个桶(bucket)的
         it = primary_hashtable[hv & hashmask(hashpower)];
     }
 
@@ -99,7 +99,7 @@ item *assoc_find(const char *key, const size_t nkey, const uint32_t hv) {
     item *ret = NULL;
     int depth = 0;
     while (it) {
-		//调用memcmp来进行比较
+        //调用memcmp来进行比较
         if ((nkey == it->nkey) && (memcmp(key, ITEM_key(it), nkey) == 0)) {
             ret = it;
             break;
@@ -125,7 +125,7 @@ static item** _hashitem_before (const char *key, const size_t nkey, const uint32
     } else {
         pos = &primary_hashtable[hv & hashmask(hashpower)];
     }
-	//遍历桶的冲突链查找item 
+    //遍历桶的冲突链查找item 
     while (*pos && ((nkey != (*pos)->nkey) || memcmp(key, ITEM_key(*pos), nkey))) {
         pos = &(*pos)->h_next;
     }
@@ -135,7 +135,7 @@ static item** _hashitem_before (const char *key, const size_t nkey, const uint32
 /* grows the hashtable to the next power of 2. */
 static void assoc_expand(void) {
     old_hashtable = primary_hashtable;
-	//申请一个新的hash表，此时primary_hashtable是新表，old_hashtable是旧表
+    //申请一个新的hash表，此时primary_hashtable是新表，old_hashtable是旧表
     primary_hashtable = calloc(hashsize(hashpower + 1), sizeof(void *));
     if (primary_hashtable) {
         if (settings.verbose > 1)
@@ -158,7 +158,7 @@ static void assoc_start_expand(void) {
     if (started_expanding)
         return;
     started_expanding = true;
-	//phtread_cond_signal来唤醒等待该maintanance_cond条件变量的线程，即扩容线程
+    //phtread_cond_signal来唤醒等待该maintanance_cond条件变量的线程，即扩容线程
     pthread_cond_signal(&maintenance_cond);
 }
 
@@ -173,21 +173,21 @@ int assoc_insert(item *it, const uint32_t hv) {
     if (expanding &&
         (oldbucket = (hv & hashmask(hashpower - 1))) >= expand_bucket)
     {
-		//目前处于扩容状态，但这个桶的数据还没有迁移，因此插入到旧表old_hashtable
+        //目前处于扩容状态，但这个桶的数据还没有迁移，因此插入到旧表old_hashtable
         it->h_next = old_hashtable[oldbucket];
         old_hashtable[oldbucket] = it;
     } else {
-		//插入到新表，primary_hashtable
+        //插入到新表，primary_hashtable
         it->h_next = primary_hashtable[hv & hashmask(hashpower)];
         primary_hashtable[hv & hashmask(hashpower)] = it;
     }
-	//元素数目+1
+    //元素数目+1
     hash_items++;
 
     // 适时扩张，当元素个数超过hash容量的1.5倍时
     if (! expanding && hash_items > (hashsize(hashpower) * 3) / 2) {
         //调用assoc_start_expand函数来唤醒扩容线程
-		assoc_start_expand();
+        assoc_start_expand();
     }
 
     MEMCACHED_ASSOC_INSERT(ITEM_key(it), it->nkey, hash_items);
@@ -197,7 +197,7 @@ int assoc_insert(item *it, const uint32_t hv) {
 void assoc_delete(const char *key, const size_t nkey, const uint32_t hv) {
     // 寻找到需要删除节点的前一个节点, 这是链表删除的经典操作
     item **before = _hashitem_before(key, nkey, hv);
-	//查找成功
+    //查找成功
     if (*before) {
         item *nxt;
         hash_items--;
@@ -227,8 +227,8 @@ int hash_bulk_move = DEFAULT_HASH_BULK_MOVE;
 //启动扩容线程，扩容线程在main函数中会启动，启动运行一遍之后会阻塞在条件变量maintenance_cond上面,
 //当插入元素超过规定，唤醒条件变量，再次运行
 static void *assoc_maintenance_thread(void *arg) {
-	//do_run_maintenance_thread是全局变量，初始值为1
-	//在stop_assoc_maintenance_thread函数中会被赋值0，用来终止迁移线程 
+    //do_run_maintenance_thread是全局变量，初始值为1
+    //在stop_assoc_maintenance_thread函数中会被赋值0，用来终止迁移线程 
     while (do_run_maintenance_thread) {
         int ii = 0;
 
@@ -236,13 +236,13 @@ static void *assoc_maintenance_thread(void *arg) {
          * hash table. */
         item_lock_global();
         mutex_lock(&cache_lock);
-		
-		//hash_bulk_move用来控制每次迁移，移动多少个桶的item。默认是一个.  
+        
+        //hash_bulk_move用来控制每次迁移，移动多少个桶的item。默认是一个.  
         //如果expanding为true才会进入循环体，所以迁移线程刚创建的时候，并不会进入循环体
         for (ii = 0; ii < hash_bulk_move && expanding; ++ii) {
             item *it, *next;
             int bucket;
-			//遍历旧哈希表中由expand_bucket指明的桶,将该桶的所有item迁移到新扩容的哈希表中
+            //遍历旧哈希表中由expand_bucket指明的桶,将该桶的所有item迁移到新扩容的哈希表中
             for (it = old_hashtable[expand_bucket]; NULL != it; it = next) {
                 next = it->h_next;
 
@@ -252,9 +252,9 @@ static void *assoc_maintenance_thread(void *arg) {
             }
 
             old_hashtable[expand_bucket] = NULL;
-			//迁移完一个桶，接着把expand_bucket指向下一个待迁移的桶
+            //迁移完一个桶，接着把expand_bucket指向下一个待迁移的桶
             expand_bucket++;
-			//数据迁移完毕
+            //数据迁移完毕
             if (expand_bucket == hashsize(hashpower - 1)) {
                 expanding = false;
                 free(old_hashtable);
@@ -266,10 +266,10 @@ static void *assoc_maintenance_thread(void *arg) {
                     fprintf(stderr, "Hash table expansion done\n");
             }
         }
-		//释放锁
+        //释放锁
         mutex_unlock(&cache_lock);
         item_unlock_global();
-		//不再迁移数据
+        //不再迁移数据
         if (!expanding) {
             /* finished expanding. tell all threads to use fine-grained locks */
             switch_item_lock_type(ITEM_LOCK_GRANULAR);
@@ -277,7 +277,7 @@ static void *assoc_maintenance_thread(void *arg) {
             /* We are done expanding.. just wait for next invocation */
             mutex_lock(&cache_lock);
             started_expanding = false;
-			//挂起迁移线程，直到worker线程插入数据后发现item数量已经到了1.5倍哈希表大小，  
+            //挂起迁移线程，直到worker线程插入数据后发现item数量已经到了1.5倍哈希表大小，  
             //此时调用worker线程调用assoc_start_expand函数，该函数会调用pthread_cond_signal  
             //唤醒迁移线程
             pthread_cond_wait(&maintenance_cond, &cache_lock);

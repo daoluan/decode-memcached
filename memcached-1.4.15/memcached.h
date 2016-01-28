@@ -383,11 +383,11 @@ typedef struct _stritem {
 
 // 多个线程, 每个线程一个 event_base
 typedef struct {
-	//线程ID
+    //线程ID
     pthread_t thread_id;        /* unique ID of this thread */
     
-	//libevent的event_base实例，每个线程一个
-	struct event_base *base;    /* libevent handle this thread uses */
+    //libevent的event_base实例，每个线程一个
+    struct event_base *base;    /* libevent handle this thread uses */
 
     // event 结构体, 用于管道读写事件的监听
     struct event notify_event;  /* listen event for notify pipe */
@@ -402,8 +402,8 @@ typedef struct {
     // 这个线程需要处理的连接队列
     struct conn_queue *new_conn_queue; /* queue of new connections to handle */
     cache_t *suffix_cache;      /* suffix cache */
-	
-	//线程操作的锁类型，局部锁或者全局锁
+    
+    //线程操作的锁类型，局部锁或者全局锁
     uint8_t item_lock_type;     /* use fine-grained or global item lock */
 } LIBEVENT_THREAD;
 
