@@ -19,7 +19,9 @@
 
 /* An item in the connection queue. */
 typedef struct conn_queue_item CQ_ITEM;
+//连接队列的元素
 struct conn_queue_item {
+    //通信套接字的文件描述符
     int               sfd;
     enum conn_states  init_state;
     int               event_flags;
@@ -29,11 +31,16 @@ struct conn_queue_item {
 };
 
 /* A connection queue. */
+//连接队列
 typedef struct conn_queue CQ;
 struct conn_queue {
+    //头指针
     CQ_ITEM *head;
+    //尾指针
     CQ_ITEM *tail;
+    //锁
     pthread_mutex_t lock;
+    //条件变量
     pthread_cond_t  cond;
 };
 
@@ -215,6 +222,7 @@ void switch_item_lock_type(enum item_lock_types type) {
 /*
  * Initializes a connection queue.
  */
+//连接队列初始化
 static void cq_init(CQ *cq) {
     pthread_mutex_init(&cq->lock, NULL);
     pthread_cond_init(&cq->cond, NULL);
@@ -227,12 +235,15 @@ static void cq_init(CQ *cq) {
  * one.
  * Returns the item, or NULL if no item is available
  */
+ //获取一个连接
 static CQ_ITEM *cq_pop(CQ *cq) {
     CQ_ITEM *item;
 
     pthread_mutex_lock(&cq->lock);
+    //获取头指针
     item = cq->head;
     if (NULL != item) {
+        //头指针不为空，则更新头指针
         cq->head = item->next;
         if (NULL == cq->head)
             cq->tail = NULL;
@@ -244,8 +255,8 @@ static CQ_ITEM *cq_pop(CQ *cq) {
 
 /*
  * Adds an item to a connection queue.
- * 在连接队列中增加一个项
  */
+ //添加一个新的连接
 static void cq_push(CQ *cq, CQ_ITEM *item) {
     item->next = NULL;
 
@@ -263,6 +274,7 @@ static void cq_push(CQ *cq, CQ_ITEM *item) {
 /*
  * Returns a fresh connection queue item.
  */
+ //新建连接
 static CQ_ITEM *cqi_new(void) {
     CQ_ITEM *item = NULL;
     pthread_mutex_lock(&cqi_freelist_lock);
@@ -276,6 +288,7 @@ static CQ_ITEM *cqi_new(void) {
         int i;
 
         /* Allocate a bunch of items at once to reduce fragmentation */
+        //一次性分配多个连接的空间
         item = malloc(sizeof(CQ_ITEM) * ITEMS_PER_ALLOC);
         if (NULL == item)
             return NULL;
@@ -301,6 +314,7 @@ static CQ_ITEM *cqi_new(void) {
 /*
  * Frees a connection queue item (adds it to the freelist.)
  */
+//释放连接item，将其添加到空闲链表中
 static void cqi_free(CQ_ITEM *item) {
     pthread_mutex_lock(&cqi_freelist_lock);
     item->next = cqi_freelist;

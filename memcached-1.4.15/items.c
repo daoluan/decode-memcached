@@ -54,6 +54,7 @@ void item_stats_reset(void) {
 
 
 /* Get the next CAS id for a new item. */
+//为新的item生成cas值
 uint64_t get_cas_id(void) {
     static uint64_t cas_id = 0;
     return ++cas_id;

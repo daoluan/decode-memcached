@@ -16,6 +16,7 @@ int cache_error = 0;
 
 const int initial_pool_size = 64;
 
+//创建缓存对象
 cache_t* cache_create(const char *name, size_t bufsize, size_t align,
                       cache_constructor_t* constructor,
                       cache_destructor_t* destructor) {
@@ -54,6 +55,7 @@ static inline void* get_object(void *ptr) {
 #endif
 }
 
+//销毁缓存对象
 void cache_destroy(cache_t *cache) {
     while (cache->freecurr > 0) {
         void *ptr = cache->ptr[--cache->freecurr];

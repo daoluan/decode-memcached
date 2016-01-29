@@ -725,6 +725,7 @@ static void conn_set_state(conn *c, enum conn_states state) {
 static int ensure_iov_space(conn *c) {
     assert(c != NULL);
 
+    //空间使用完了
     if (c->iovused >= c->iovsize) {
         int i, iovnum;
         struct iovec *new_iov = (struct iovec *)realloc(c->iov,
@@ -774,7 +775,7 @@ static int add_iov(conn *c, const void *buf, int len) {
             add_msghdr(c);
             m = &c->msglist[c->msgused - 1];+
         }
-
+        //保证iovec数组空间足够
         if (ensure_iov_space(c) != 0)
             return -1;
 
@@ -785,7 +786,7 @@ static int add_iov(conn *c, const void *buf, int len) {
         } else {
             leftover = 0;
         }
-
+        //为iov赋值，内容是响应数据
         m = &c->msglist[c->msgused - 1];
         m->msg_iov[m->msg_iovlen].iov_base = (void *)buf;
         m->msg_iov[m->msg_iovlen].iov_len = len;
@@ -899,7 +900,9 @@ static void out_string(conn *c, const char *str) {
     // ?
     c->wcurr = c->wbuf;
 
+    //转换为写状态
     conn_set_state(c, conn_write);
+    //写完的下一个状态
     c->write_and_go = conn_new_cmd;
     return;
 }
@@ -922,6 +925,7 @@ static void complete_nread_ascii(conn *c) {
     if (strncmp(ITEM_data(it) + it->nbytes - 2, "\r\n", 2) != 0) {
         out_string(c, "CLIENT_ERROR bad data chunk");
     } else {
+      //将这个item放入到LRU队列和哈希表中
       ret = store_item(it, comm, c);
 
 #ifdef ENABLE_DTRACE
@@ -954,6 +958,7 @@ static void complete_nread_ascii(conn *c) {
       }
 #endif
 
+      //打印响应信息
       switch (ret) {
       case STORED:
           out_string(c, "STORED");
@@ -973,6 +978,7 @@ static void complete_nread_ascii(conn *c) {
 
     }
 
+    //取消本线程对这个item的引用
     item_remove(c->item);       /* release the c->item reference */
     c->item = 0;
 }
@@ -2351,9 +2357,11 @@ static void complete_nread(conn *c) {
     assert(c->protocol == ascii_prot
            || c->protocol == binary_prot);
 
+    //文本协议
     if (c->protocol == ascii_prot) {
         complete_nread_ascii(c);
     } else if (c->protocol == binary_prot) {
+        //二进制协议
         complete_nread_binary(c);
     }
 }
@@ -2364,7 +2372,7 @@ static void complete_nread(conn *c) {
  *
  * Returns the state of storage. 返回存储结果
  */
-enum store_item_type do_store_item(item *it, int comm, conn *c, const uint32_t hv) {                                        comm 是命令
+enum store_item_type do_store_item(item *it, int comm, conn *c, const uint32_t hv) {
     char *key = ITEM_key(it);
 
     // 获取旧的数据项
@@ -2401,11 +2409,12 @@ enum store_item_type do_store_item(item *it, int comm, conn *c, const uint32_t h
         }
 
         // Memcached于1.2.4版本新增CAS(Check and Set)协议类同于Java并发的CAS(Compare and Swap)原子操作，处理同一item被多个线程更改过程的并发问题
-
+        // 关于memcached的CAS，可参考:http://www.linuxidc.com/Linux/2015-01/112507p12.htm
         // ITEM_get_cas():
         // #define ITEM_get_cas(i) (((i)->it_flags & ITEM_CAS) ? \
         // (i)->data->cas : (uint64_t)0)
         else if (ITEM_get_cas(it) == ITEM_get_cas(old_it)) {
+            //cas值一致，进行存储
             // cas validates
             // it and old_it may belong to different classes.
             // I'm updating the stats for the one that's getting pushed out
@@ -2418,6 +2427,7 @@ enum store_item_type do_store_item(item *it, int comm, conn *c, const uint32_t h
             stored = STORED;
 
         } else {
+            //cas值不一致，不进行实际存储
             pthread_mutex_lock(&c->thread->stats.mutex);
             c->thread->stats.slab_stats[old_it->slabs_clsid].cas_badval++;
             pthread_mutex_unlock(&c->thread->stats.mutex);
@@ -2833,7 +2843,7 @@ static void process_stat(conn *c, token_t *tokens, const size_t ntokens) {
         c->stats.buffer = NULL;
     }
 }
-
+//处理get命令
 /* ntokens is overwritten here... shrug.. */
 static inline void process_get_command(conn *c, token_t *tokens, size_t ntokens, bool return_cas) {
     char *key;
@@ -2844,6 +2854,7 @@ static inline void process_get_command(conn *c, token_t *tokens, size_t ntokens,
     char *suffix;
     assert(c != NULL);
 
+    //get命令可以同时处理多条记录，如get key1 key2 key3
     do {
         while(key_token->length != 0) {
 
@@ -2920,6 +2931,7 @@ static inline void process_get_command(conn *c, token_t *tokens, size_t ntokens,
                 {
                   MEMCACHED_COMMAND_GET(c->sfd, ITEM_key(it), it->nkey,
                                         it->nbytes, ITEM_get_cas(it));
+                  //填充要返回的信息
                   if (add_iov(c, "VALUE ", 6) != 0 ||
                       add_iov(c, ITEM_key(it), it->nkey) != 0 ||
                       add_iov(c, ITEM_suffix(it), it->nsuffix + it->nbytes) != 0)
@@ -2938,6 +2950,7 @@ static inline void process_get_command(conn *c, token_t *tokens, size_t ntokens,
                 c->thread->stats.slab_stats[it->slabs_clsid].get_hits++;
                 c->thread->stats.get_cmds++;
                 pthread_mutex_unlock(&c->thread->stats.mutex);
+                //更新item
                 item_update(it);
                 *(c->ilist + i) = it;
                 i++;
@@ -2957,6 +2970,7 @@ static inline void process_get_command(conn *c, token_t *tokens, size_t ntokens,
          * If the command string hasn't been fully processed, get the next set
          * of tokens.
          */
+        //如果一次不能全部处理完参数，需要继续调用tokenize_command
         if(key_token->value != NULL) {
             ntokens = tokenize_command(key_token->value, tokens, MAX_TOKENS);
             key_token = tokens;
@@ -2984,6 +2998,7 @@ static inline void process_get_command(conn *c, token_t *tokens, size_t ntokens,
         out_string(c, "SERVER_ERROR out of memory writing get response");
     }
     else {
+        //设置conn_mwrite状态，准备回应数据
         conn_set_state(c, conn_mwrite);
         c->msgcurr = 0;
     }
@@ -3003,8 +3018,9 @@ static void process_update_command(conn *c, token_t *tokens, const size_t ntoken
 
     assert(c != NULL);
 
+    //设置服务器不需要回复信息给客户端
     set_noreply_maybe(c, tokens, ntokens);
-	//key过长
+    //key过长
     if (tokens[KEY_TOKEN].length > KEY_MAX_LENGTH) {
         out_string(c, "CLIENT_ERROR bad command line format");
         return;
@@ -3013,6 +3029,7 @@ static void process_update_command(conn *c, token_t *tokens, const size_t ntoken
     key = tokens[KEY_TOKEN].value;//键名
     nkey = tokens[KEY_TOKEN].length;//键长度
 
+    //将字符串转换为long
     if (! (safe_strtoul(tokens[2].value, (uint32_t *)&flags)
            && safe_strtol(tokens[3].value, &exptime_int)
            && safe_strtol(tokens[4].value, (int32_t *)&vlen))) {
@@ -3046,7 +3063,7 @@ static void process_update_command(conn *c, token_t *tokens, const size_t ntoken
     if (settings.detail_enabled) {
         stats_prefix_record_set(key, nkey);
     }
-    //分配内存
+    //根据需要的大小分配item
     it = item_alloc(key, nkey, flags, realtime(exptime), vlen);
 
     if (it == 0) {
@@ -3544,6 +3561,7 @@ static int try_read_command(conn *c) {
     assert(c->rbytes > 0);
 	//memcached支持二进制协议和文本协议
     if (c->protocol == negotiating_prot || c->transport == udp_transport)  {
+        //PROTOCOL_BINARY_REQ为0x80，即128。对于ascii的文本来说，是不会取这个值的，所以判断为binary_prot
         if ((unsigned char)c->rbuf[0] == (unsigned char)PROTOCOL_BINARY_REQ) {
             c->protocol = binary_prot;
         } else {
@@ -3627,12 +3645,14 @@ static int try_read_command(conn *c) {
             c->rcurr += sizeof(c->binary_header);
         }
     } else {
+        //文本协议
         char *el, *cont;
 
         if (c->rbytes == 0)
             return 0;
 
         el = memchr(c->rcurr, '\n', c->rbytes);
+        //没有读取到一条完整的命令
         if (!el) {
             if (c->rbytes > 1024) {
                 /*
@@ -3654,14 +3674,15 @@ static int try_read_command(conn *c) {
 
             return 0;
         }
+        //读取到了一条完整的命令
         cont = el + 1;
+        //判断\r\n
         if ((el - c->rcurr) > 1 && *(el - 1) == '\r') {
             el--;
         }
         *el = '\0';
-
         assert(cont <= (c->rcurr + c->rbytes));
-
+        //处理这条命令
         process_command(c, c->rcurr);
 
         c->rbytes -= (cont - c->rcurr);
@@ -3860,6 +3881,7 @@ void do_accept_new_conns(const bool do_accept) {
  *   TRANSMIT_SOFT_ERROR Can't write any more right now.
  *   TRANSMIT_HARD_ERROR Can't write (c->state is set to conn_closing)
  */
+ //写数据
 static enum transmit_result transmit(conn *c) {
     assert(c != NULL);
 
@@ -3996,6 +4018,7 @@ static void drive_machine(conn *c) {
             }
             //进入读数据状态 
             conn_set_state(c, conn_read);
+            //可以stop，因为本event是水平触发的
             stop = true;
             break;
 
@@ -4009,7 +4032,7 @@ static void drive_machine(conn *c) {
             case READ_NO_DATA_RECEIVED:
                 conn_set_state(c, conn_waiting);
                 break;
-            // 读取请求成功
+            // 读取请求成功，接着去解析数据
             case READ_DATA_RECEIVED:
                 conn_set_state(c, conn_parse_cmd);
                 break;
@@ -4025,6 +4048,11 @@ static void drive_machine(conn *c) {
 
         // 尝试解析命令
         case conn_parse_cmd :
+            //返回1表示正在处理读取的一条命令
+            //返回0表示需要继续读取socket的数据才能解析命令
+            //如果读取到了一条完整的命令，那么函数内部会去解析,
+            //并进行调用process_command函数进行一些处理.
+            //像set、add、replace这些命令，会在处理的时候调conn_set_state(c, conn_nread)
             if (try_read_command(c) == 0) {
                 /* we need more data! */
                 conn_set_state(c, conn_waiting);
@@ -4037,6 +4065,7 @@ static void drive_machine(conn *c) {
             /* Only process nreqs at a time to avoid starving other
                connections */
 
+            //该变量用来防止客户端的命令数目过多
             --nreqs;
             if (nreqs >= 0) {
                 // 调整 conn 的状态, 将 conn 的状态更正为
@@ -4071,6 +4100,7 @@ static void drive_machine(conn *c) {
         case conn_nread:
             // 如果已经把所有的数据读完了, 直接执行命令
             if (c->rlbytes == 0) {
+                //完成对一个item的操作，包括插入到LRU队列和哈希表
                 complete_nread(c);
                 break;
             }
@@ -4079,7 +4109,7 @@ static void drive_machine(conn *c) {
             // 看是否还有剩下未读的数据
             if (c->rbytes > 0) {
                 int tocopy = c->rbytes > c->rlbytes ? c->rlbytes : c->rbytes;
-				//对于add,set,replace等命令，下面就是key赋值value的具体操作
+                //对于add,set,replace等命令，下面就是key赋值value的具体操作
                 if (c->ritem != c->rcurr) {
                     memmove(c->ritem, c->rcurr, tocopy);
                 }
@@ -4094,6 +4124,7 @@ static void drive_machine(conn *c) {
 
             /*  now try reading from the socket */
             res = read(c->sfd, c->ritem, c->rlbytes);
+            //只要socket读取数据不发生错误，状态机就会一直保持conn_nread的状态
             if (res > 0) {
                 pthread_mutex_lock(&c->thread->stats.mutex);
                 c->thread->stats.bytes_read += res;
@@ -4208,7 +4239,9 @@ static void drive_machine(conn *c) {
             conn_set_state(c, conn_closing);
             break;
           }
+            //调用transmit函数发送数据给相应的客户端
             switch (transmit(c)) {
+            //发送数据完毕
             case TRANSMIT_COMPLETE:
                 if (c->state == conn_mwrite) {
 
@@ -4231,7 +4264,7 @@ static void drive_machine(conn *c) {
                     if(c->protocol == binary_prot) {
                         conn_set_state(c, c->write_and_go);
                     } else {
-                        // 等待新的命令
+                        // 等待新的命令，回到一开始的conn_new_cmd状态
                         conn_set_state(c, conn_new_cmd);
                     }
 
