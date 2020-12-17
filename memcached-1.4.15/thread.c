@@ -19,7 +19,9 @@
 
 /* An item in the connection queue. */
 typedef struct conn_queue_item CQ_ITEM;
+//连接队列的元素
 struct conn_queue_item {
+    //通信套接字的文件描述符
     int               sfd;
     enum conn_states  init_state;
     int               event_flags;
@@ -29,11 +31,16 @@ struct conn_queue_item {
 };
 
 /* A connection queue. */
+//连接队列
 typedef struct conn_queue CQ;
 struct conn_queue {
+    //头指针
     CQ_ITEM *head;
+    //尾指针
     CQ_ITEM *tail;
+    //锁
     pthread_mutex_t lock;
+    //条件变量
     pthread_cond_t  cond;
 };
 
@@ -81,9 +88,10 @@ static pthread_cond_t init_cond;
 
 
 static void thread_libevent_process(int fd, short which, void *arg);
-
+//增加引用计数
 unsigned short refcount_incr(unsigned short *refcount) {
 #ifdef HAVE_GCC_ATOMICS
+    //__sync_add_and_fetch是gcc下提供的原子操作函数
     return __sync_add_and_fetch(refcount, 1);
 #elif defined(__sun)
     return atomic_inc_ushort_nv(refcount);
@@ -96,9 +104,10 @@ unsigned short refcount_incr(unsigned short *refcount) {
     return res;
 #endif
 }
-
+//减少引用计数
 unsigned short refcount_decr(unsigned short *refcount) {
 #ifdef HAVE_GCC_ATOMICS
+    //__sync_sub_and_fetch是gcc下提供的原子操作函数
     return __sync_sub_and_fetch(refcount, 1);
 #elif defined(__sun)
     return atomic_dec_ushort_nv(refcount);
@@ -120,12 +129,15 @@ void item_lock_global(void) {
 void item_unlock_global(void) {
     mutex_unlock(&item_global_lock);
 }
-
+//item加锁
 void item_lock(uint32_t hv) {
+    //获取线程私有变量
     uint8_t *lock_type = pthread_getspecific(item_lock_type_key);
     if (likely(*lock_type == ITEM_LOCK_GRANULAR)) {
+        //对桶加锁
         mutex_lock(&item_locks[(hv & hashmask(hashpower)) % item_lock_count]);
     } else {
+        //所有item加锁，全局级别
         mutex_lock(&item_global_lock);
     }
 }
@@ -173,16 +185,17 @@ static void register_thread_initialized(void) {
     pthread_cond_signal(&init_cond);
     pthread_mutex_unlock(&init_lock);
 }
-
+// 发送消息，切换锁级别
 void switch_item_lock_type(enum item_lock_types type) {
     char buf[1];
     int i;
 
     switch (type) {
-        // 需要更改的状态
+        //用l表示ITEM_LOCK_GRANULAR 段级别锁
         case ITEM_LOCK_GRANULAR:
             buf[0] = 'l';
             break;
+        //用g表示ITEM_LOCK_GLOBAL 全局级别锁
         case ITEM_LOCK_GLOBAL:
             buf[0] = 'g';
             break;
@@ -195,11 +208,13 @@ void switch_item_lock_type(enum item_lock_types type) {
     pthread_mutex_lock(&init_lock);
     init_count = 0;
     for (i = 0; i < settings.num_threads; i++) {
+        //通过向worker监听的管道写入一个字符通知worker线程
         if (write(threads[i].notify_send_fd, buf, 1) != 1) {
             perror("Failed writing to notify pipe");
             /* TODO: This is a fatal problem. Can it ever happen temporarily? */
         }
     }
+    //等待所有的workers线程都把锁切换到type指明的锁类型
     wait_for_thread_registration(settings.num_threads);
     pthread_mutex_unlock(&init_lock);
 }
@@ -207,6 +222,7 @@ void switch_item_lock_type(enum item_lock_types type) {
 /*
  * Initializes a connection queue.
  */
+//连接队列初始化
 static void cq_init(CQ *cq) {
     pthread_mutex_init(&cq->lock, NULL);
     pthread_cond_init(&cq->cond, NULL);
@@ -219,12 +235,15 @@ static void cq_init(CQ *cq) {
  * one.
  * Returns the item, or NULL if no item is available
  */
+ //获取一个连接
 static CQ_ITEM *cq_pop(CQ *cq) {
     CQ_ITEM *item;
 
     pthread_mutex_lock(&cq->lock);
+    //获取头指针
     item = cq->head;
     if (NULL != item) {
+        //头指针不为空，则更新头指针
         cq->head = item->next;
         if (NULL == cq->head)
             cq->tail = NULL;
@@ -236,8 +255,8 @@ static CQ_ITEM *cq_pop(CQ *cq) {
 
 /*
  * Adds an item to a connection queue.
- * 在连接队列中增加一个项
  */
+ //添加一个新的连接
 static void cq_push(CQ *cq, CQ_ITEM *item) {
     item->next = NULL;
 
@@ -255,6 +274,7 @@ static void cq_push(CQ *cq, CQ_ITEM *item) {
 /*
  * Returns a fresh connection queue item.
  */
+ //新建连接
 static CQ_ITEM *cqi_new(void) {
     CQ_ITEM *item = NULL;
     pthread_mutex_lock(&cqi_freelist_lock);
@@ -268,6 +288,7 @@ static CQ_ITEM *cqi_new(void) {
         int i;
 
         /* Allocate a bunch of items at once to reduce fragmentation */
+        //一次性分配多个连接的空间
         item = malloc(sizeof(CQ_ITEM) * ITEMS_PER_ALLOC);
         if (NULL == item)
             return NULL;
@@ -293,6 +314,7 @@ static CQ_ITEM *cqi_new(void) {
 /*
  * Frees a connection queue item (adds it to the freelist.)
  */
+//释放连接item，将其添加到空闲链表中
 static void cqi_free(CQ_ITEM *item) {
     pthread_mutex_lock(&cqi_freelist_lock);
     item->next = cqi_freelist;
@@ -303,7 +325,7 @@ static void cqi_free(CQ_ITEM *item) {
 
 /*
  * Creates a worker thread.
- * 启动线程
+ * 创建工作线程
  */
 static void create_worker(void *(*func)(void *), void *arg) {
     pthread_t       thread;
@@ -311,7 +333,7 @@ static void create_worker(void *(*func)(void *), void *arg) {
     int             ret;
 
     pthread_attr_init(&attr);
-
+    //线程处理函数为:worker_libevent
     if ((ret = pthread_create(&thread, &attr, func, arg)) != 0) {
         fprintf(stderr, "Can't create thread: %s\n",
                 strerror(ret));
@@ -338,6 +360,7 @@ void accept_new_conns(const bool do_accept) {
  //     初始化互斥量
  //     等
 static void setup_thread(LIBEVENT_THREAD *me) {
+	//初始化event_base，请参考libevent手册
     me->base = event_init();
     if (! me->base) {
         fprintf(stderr, "Can't allocate event base\n");
@@ -348,6 +371,7 @@ static void setup_thread(LIBEVENT_THREAD *me) {
     // 在线程数据结构初始化的时候, 为 me->notify_receive_fd 读管道注册读事件, 回调函数是 thread_libevent_process()
     event_set(&me->notify_event, me->notify_receive_fd,
               EV_READ | EV_PERSIST, thread_libevent_process, me);
+    //为event_base实例注册nofify_event事件，请参考libevent手册
     event_base_set(me->base, &me->notify_event);
 
     if (event_add(&me->notify_event, 0) == -1) {
@@ -355,7 +379,7 @@ static void setup_thread(LIBEVENT_THREAD *me) {
         exit(1);
     }
 
-    // 初始化该线程的工作队列
+    // 创建并初始化该线程的工作队列
     me->new_conn_queue = malloc(sizeof(struct conn_queue));
     if (me->new_conn_queue == NULL) {
         perror("Failed to allocate memory for connection queue");
@@ -393,6 +417,7 @@ static void *worker_libevent(void *arg) {
      * all item_lock calls...
      */
     me->item_lock_type = ITEM_LOCK_GRANULAR;
+    //设置线程的私有数据，锁的级别属性
     pthread_setspecific(item_lock_type_key, &me->item_lock_type);
 
     register_thread_initialized();
@@ -425,6 +450,7 @@ static void thread_libevent_process(int fd, short which, void *arg) {
 
     if (NULL != item) {
         // 为新的请求建立一个连接结构体. 连接其实已经建立, 这里只是为了填充连接结构体. 最关键的动作是在 libevent 中注册了事件, 回调函数是 event_handler()
+        //event_handler的执行流程最终会进入业务处理的状态机中
         conn *c = conn_new(item->sfd, item->init_state, item->event_flags,
                            item->read_buffer_size, item->transport, me->base);
         if (c == NULL) {
@@ -446,11 +472,12 @@ static void thread_libevent_process(int fd, short which, void *arg) {
         break;
 
     /* we were told to flip the lock type and report in */
+    //切换为段锁
     case 'l':
     me->item_lock_type = ITEM_LOCK_GRANULAR;
     register_thread_initialized();
         break;
-
+	//切换为全局锁
     case 'g':
     me->item_lock_type = ITEM_LOCK_GLOBAL;
     register_thread_initialized();
@@ -477,7 +504,7 @@ void dispatch_conn_new(int sfd, enum conn_states init_state, int event_flags,
     char buf[1];
 
     // 线程池中有多个线程, 每个线程都有一个工作队列, 线程所需要做的就是从工作队列中取出工作任务并执行, 只要队列为空线程就可以进入等待状态
-    // 计算线程信息下标
+    // 通过轮询来选择一个线程
     int tid = (last_thread + 1) % settings.num_threads;
 
     // LIBEVENT_THREAD threads 是一个全局数组变量
@@ -811,7 +838,7 @@ void slab_stats_aggregate(struct thread_stats *stats, struct slab_stats *out) {
  * nthreads  Number of worker event handler threads to spawn
     需准备的线程数
  * main_base Event base for main thread
-    分发线程
+    分发线程的libevent实例
  */
 void thread_init(int nthreads, struct event_base *main_base) {
     int         i;
@@ -829,6 +856,7 @@ void thread_init(int nthreads, struct event_base *main_base) {
 
     /* Want a wide lock table, but don't waste memory */
     // 锁表?
+	// nthreads表示线程的数量
     if (nthreads < 3) {
         power = 10;
     } else if (nthreads < 4) {
@@ -841,24 +869,29 @@ void thread_init(int nthreads, struct event_base *main_base) {
         power = 13;
     }
 
-    // 预申请那么多的锁, 拿来做什么
-    // hashsize = 2^n
+    // memcached有两种锁机制，可参考：http://blog.csdn.net/luotuo44/article/details/42913549
+    // hashsize = 2^n，若干个桶共用一个锁，所以需要很多锁
     item_lock_count = hashsize(power);
-
+    // 分配大量锁
     item_locks = calloc(item_lock_count, sizeof(pthread_mutex_t));
     if (! item_locks) {
         perror("Can't allocate item locks");
         exit(1);
     }
-    // 初始化
+    // 对锁进行初始化
     for (i = 0; i < item_lock_count; i++) {
         pthread_mutex_init(&item_locks[i], NULL);
     }
+
+    // 创建线程的局部变量，该局部变量的名称为item_lock_type_key,用于保存主hash表所持有的锁的类型 
+    // 主hash表在进行扩容时，该锁类型会变为全局的锁，否则(不在扩容过程中)，则是局部锁
+    // reference:http://blog.csdn.net/lcli2009/article/details/21525839
     pthread_key_create(&item_lock_type_key, NULL);
     pthread_mutex_init(&item_global_lock, NULL);
 
 
     // LIBEVENT_THREAD 是结合 libevent 使用的结构体, event_base, 读写管道
+    //为线程组分配nthreads个空间
     threads = calloc(nthreads, sizeof(LIBEVENT_THREAD));
     if (! threads) {
         perror("Can't allocate thread descriptors");
@@ -901,4 +934,3 @@ void thread_init(int nthreads, struct event_base *main_base) {
     wait_for_thread_registration(nthreads);
     pthread_mutex_unlock(&init_lock);
 }
-

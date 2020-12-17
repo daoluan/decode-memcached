@@ -9,6 +9,7 @@
     3rd argument specifies if the slab allocator should allocate all memory
     up front (if true), or allocate memory in chunks as it is needed (if false)
 */
+//内存初始化，settings.maxbytes是Memcached初始启动参数指定的内存值大小,settings.factor是内存增长因子
 void slabs_init(const size_t limit, const double factor, const bool prealloc);
 
 
